@@ -5,7 +5,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt    
 
-def get_inten_dist(directory):
+def get_inten_dist(directory, level):
     intensity_array = []; intensity_zoom = []; large_int_count = 0
     for i,file in enumerate(os.listdir(directory)):
         if i < 3:
