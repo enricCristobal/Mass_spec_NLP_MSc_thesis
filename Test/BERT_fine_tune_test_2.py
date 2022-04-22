@@ -14,6 +14,7 @@ import pandas as pd
 
 from statistics import mean
 import math
+import numpy as np
 import time
 import random
 import matplotlib.pyplot as plt
@@ -198,7 +199,7 @@ train_finetune_percentage = 0.8 # this is percentage of the files taking for fin
 
 file_limit_finetune = int(len(samples_list) * finetune_percentage)
 
-#finetune_samples = samples_list[-file_limit_finetune:] # Get the last finetune_percentage of files within the directory
+finetune_samples = samples_list[-file_limit_finetune:] # Get the last finetune_percentage of files within the directory
 
 file_limit_training_filetune = int(len(finetune_samples) * train_finetune_percentage)
 train_finetune_samples = finetune_samples[:file_limit_training_filetune]
@@ -337,7 +338,22 @@ class FineTuneBERT(nn.Module):
         self.num_labels = num_labels
         d_model = pre_train_model.state_dict()['encoder.weight'].size()[1] #Get d_model from pre_train_model state_dict (encoder layer will always have this size)
         self.classification_layer = nn.Linear(d_model, num_labels) 
+        # following code for AttentionNetwork obtained from https://github.com/ml-jku/DeepRC/blob/master/deeprc/architectures.py
+        # !!TODO: Check reference because they have a very nice way of organizing model by classes, etc.
+        self.n_attention_layers = 2
+        self.n_units = d_model
+        fc_attention = []
+        for _ in range(self.n_attention_layers):
+            att_linear = nn.Linear(n_input_features, self.n_units)
+            att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
+            fc_attention.append(att_linear)
+            fc_attention.append(nn.SELU()) # from reference (might have to change to GeLU)
+            n_input_features = self.n_units
         
+        att_linear = nn.Linear(n_input_features, 1)
+        att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
+        fc_attention.append(att_linear)
+        self.attention_nn = torch.nn.Sequential(*fc_attention)
         self.init_weights()
     
     def init_weights(self) -> None:
@@ -349,9 +365,10 @@ class FineTuneBERT(nn.Module):
         #print('Forward in: ', src.size())
         src = self.pre_train_model(src)
         #print('Out pre-train model: ', src.size())
+        attention_weights = self.attention_nn(src)
         output = self.classification_layer(src)
         #print('Out fine-tune: ', output.size())
-        return output
+        return attention_weights, output
 
 model = FineTuneBERT(pre_model, num_labels).to(device)
 criterion = nn.CrossEntropyLoss()
@@ -378,7 +395,7 @@ def train(model: nn.Module) -> None:
 
     for batch in range(num_batches):
 
-        output = model(inputs[batch].to(device))
+        att_weights, output = model(inputs[batch].to(device))
         # Output will have size [512 x batchsize x class_labels] --> because each token will give a certain classification, that is why, we need to use only the 
         # first [CLS] token classification, it is this the one we are fine-tuning in this step --> output[0], optimizing then for this token to predict the correct
         # class_labels
@@ -425,7 +442,7 @@ def sample_train(model: nn.Module) -> None:
 
         for batch in range(num_batches):
 
-            output = model(inputs[batch].to(device))
+            att_weights, output = model(inputs[batch].to(device))
             # Output will have size [512 x batchsize x class_labels] --> because each token will give a certain classification, that is why, we need to use only the 
             # first [CLS] token classification, it is this the one we are fine-tuning in this step --> output[0], optimizing then for this token to predict the correct
             # class_labels
@@ -466,7 +483,7 @@ def evaluate(model: nn.Module) -> float:
 
     with torch.no_grad():
         for batch in range(num_batches):
-            output = model(inputs[batch].to(device))
+            att_weights, output = model(inputs[batch].to(device))
             loss = criterion(output[0], class_labels[batch])
 
             total_loss += loss.item()

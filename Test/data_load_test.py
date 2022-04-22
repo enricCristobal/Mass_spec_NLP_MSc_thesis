@@ -215,7 +215,7 @@ class data_load:
 
         final_input = []; mask_indices = []
         for input_line in input:
-            for input, masked_indices in mask_input(input_line):
+            for input, masked_indices in mask_input(input_line, cls_token):
                 final_input.append([input])
                 mask_indices.append(masked_indices)
         
