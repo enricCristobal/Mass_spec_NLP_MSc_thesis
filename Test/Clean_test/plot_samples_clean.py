@@ -13,8 +13,6 @@ vocab = get_vocab(num_bins=50000)
 ##LOCAL PATHWAY
 data_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\' 
 
-## !!TODO: Put all these four commands in one simple function to get everything done in one line
-
 # Get the samples used for the ploting
 samples, _ = divide_train_val_samples(data_dir, 0.9, 0) # !!LOCAL THING: 0.9 to avoid histological scores csv file
 ## !!TODO: For now we need to repeat this samples line because we call it later on the plotembedding function

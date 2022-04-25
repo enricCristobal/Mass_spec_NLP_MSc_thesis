@@ -48,13 +48,13 @@ BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
 attention_network = AttentionNetwork(n_input_features = 192, n_layers = 2, n_units = 32)
 classification_layer = ClassificationLayer(d_model = 192, num_labels = num_labels)
 
-model = FineTuneBERT(attention_network, classification_layer).to(device)
+model = FineTune_classification(attention_network, classification_layer).to(device)
 
 batchsize = 16
 criterion = nn.CrossEntropyLoss()
 lr = 3e-5
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-#scaler = torch.cuda.amp.GradScaler()
+optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+scaler = torch.cuda.amp.GradScaler()
 
 #top_attention_perc = 0.1
 
@@ -78,7 +78,7 @@ for epoch in range(1, epochs + 1):
 
     if val_loss < best_val_loss:
         best_val_loss = val_loss
-        best_att_weights_matrix = update_att_matrix(att_weights_matrix)
+        best_att_weights_matrix = update_best_att_matrix(att_weights_matrix)
         #torch.save(model.state_dict(), '/home/projects/cpr_10006/people/enrcop/models/finetune_vanillabert_binary_HPvsALD.pt')
 
 plot_finetuning_error(epochs, training_error, validation_error, pathway=os.getcwd() + '/finetune_error.png')

@@ -11,11 +11,11 @@ import numpy as np
 class TransformerModel(nn.Module):
 
     def __init__(self, ntoken: int, d_model: int, nhead: int, d_hid: int,
-                 nlayers: int, dropout: float = 0.1):
+                 nlayers: int, activation, dropout: float = 0.1):
         super().__init__()
         self.model_type = 'Transformer'
         self.pos_encoder = PositionalEncoding(d_model, dropout)
-        encoder_layers = TransformerEncoderLayer(d_model, nhead, d_hid, dropout) #, activation)
+        encoder_layers = TransformerEncoderLayer(d_model, nhead, d_hid, dropout, activation)
         self.transformer_encoder = TransformerEncoder(encoder_layers, nlayers)
         self.encoder = nn.Embedding(ntoken, d_model)
         self.d_model = d_model
@@ -68,10 +68,11 @@ class PositionalEncoding(nn.Module):
 
 class BERT_scheduler:
 
-    def __init__(self, optimizer, warmup_steps, total_training_steps):
+    def __init__(self, optimizer, learning_rate, perc_warmup_steps, total_training_steps):
         self.optimizer = optimizer
+        self.learning_rate = learning_rate
         self._step = 0
-        self.warmup_steps = warmup_steps
+        self.warmup_steps = perc_warmup_steps * total_training_steps
         self.total_training_steps = total_training_steps
         self._rate = 0
 
@@ -88,7 +89,7 @@ class BERT_scheduler:
             current_steps (`int`):
                 Current step in the scheduler
         Return:
-            learning rate for the current step.
+            Rate to multiply the learning rate for the current step.
         """
         if current_step < self.warmup_steps:
             lr_lambda = float(current_step) / float(max(1, self.warmup_steps))
@@ -103,16 +104,17 @@ class BERT_scheduler:
         rate = self.rate(self._step)
         self._step += 1
         for p in self.optimizer.param_groups:
-            p['lr'] = rate
+            p['lr'] = self.learning_rate * rate
         self._rate = rate
+        #print('Learning rate: ', self.learning_rate * rate)
         self.optimizer.step()
 
     def get_lr(self):
-        return self._rate
+        return self.learning_rate * self._rate
 
 class BERT_trained(nn.Module):
     # In this class we will get rid of the decoder layer, as we'll have deleted those layers from the state_dict from the training model
-    # to be able to upload the weights
+    # to be able to upload the weights, and include the new attention and classification layers on top of it.
 
     def __init__(self, ntoken: int, d_model: int, nhead: int, d_hid: int,
                  nlayers: int, activation, dropout: float = 0.1):
@@ -134,11 +136,9 @@ class BERT_trained(nn.Module):
         """
         Args:
             src: Tensor, shape [seq_len, batch_size]
-            src_key_padding_mask: Tensor, shape [batch_size, seq_len] # In this case we get rid of this input because it is something
-            we don't want anymore in our model, since now it is fine-tuning, not training 
 
         Returns:
-            output Tensor of shape [batch_size, d_model]
+            output Tensor of shape [batch_size, embedding_dim]
         """
         src = self.encoder(src) * math.sqrt(self.d_model)
         src = self.pos_encoder(src)
@@ -159,7 +159,7 @@ class AttentionNetwork(nn.Module):
             att_linear = nn.Linear(n_input_features, self.n_units)
             att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
             fc_attention.append(att_linear)
-            fc_attention.append(nn.SELU()) # from reference (might have to change to GeLU)
+            fc_attention.append(F.gelu) # from reference nn.SELU() used(changed to GeLU)
             n_input_features = self.n_units
         
         att_linear = nn.Linear(n_input_features, 1)
@@ -168,6 +168,13 @@ class AttentionNetwork(nn.Module):
         self.attention_nn = torch.nn.Sequential(*fc_attention)
     
     def forward(self, src: Tensor) -> Tensor:
+        """
+        Args:
+            src: Tensor, shape [# scans per sample, embedding_dim] (After applying torch.cat to all the embeddings of all scans per sample)
+                Comment: Remember we will aplly mean over all the embeddings of all tokens per scan in the sample.
+        Returns:
+            attention_weights: Tensor of shape [#sacns per sample, 1]
+        """
         attention_weights = self.attention_nn(src)
         return attention_weights
 
@@ -186,6 +193,13 @@ class ClassificationLayer(nn.Module):
         self.classification_layer.weight.data.uniform_(-initrange, initrange)
     
     def forward(self, src: Tensor) -> Tensor:
+        """
+        Args:
+            src: Tensor, shape [# scans per sample, embedding_dim]
+
+        Returns:
+            output: Tensor of shape [#sacns per sample, num_labels]
+        """
         output = self.classification_layer(src)
         return output
 
@@ -193,13 +207,20 @@ class ClassificationLayer(nn.Module):
 # In reality with this class we won't be fine-tuning BERT, but just the attention and classification layers, since it will
 # be in those that we'll apply backpropagation while just using BERT as a frozen model
 # Later, defining a class where also BERT model is included could be tried out
-class FineTuneBERT(nn.Module):
+class FineTune_classification(nn.Module):
     def __init__(self, attention_network, classification_layer):
-        super(FineTuneBERT, self).__init__()
+        super(FineTune_classification, self).__init__()
         self.attention_nn = attention_network
         self.classification_nn = classification_layer
     
     def forward(self, src: Tensor) -> Tensor:
+        """
+        Args:
+            src: Tensor, shape [# scans per sample, embedding_dim]
+
+        Returns:
+            output: Tensor of shape [#sacns per sample, num_labels]
+        """
         att_weights = self.attention_nn(src)
         #print('Att layer output size: ', att_weights.size())
         att_weights_softmax = F.softmax(att_weights, dim=0)
@@ -208,6 +229,27 @@ class FineTuneBERT(nn.Module):
         #print('BERT model times att weights size: ', src_after_attention.size())
         output = self.classification_nn(src_after_attention)
         return att_weights_softmax, output
+
+
+## TODO!!: Fine-tuning model that also updates BERT model weights
+class FineTuneBERT(nn.Module):
+    def __init__(self, BERT_model, attention_network, classification_layer):
+        super(FineTuneBERT, self).__init__()
+        self.BERT = BERT_model
+        self.attention_nn = attention_network
+        self.classification_nn = classification_layer
+
+    def forward(self, src: Tensor) -> Tensor:
+        hidden_vectors = self.BERT(src)
+        ## TODO!! : aggregate hidden_vectors for attention layers (add new param to choose aggregation function?)
+        att_weights = self.attention_nn(hidden_vectors)
+        att_weights_softmax = F.softmax(att_weights, dim=0)
+        src_after_attention = src * att_weights_softmax
+        output = self.classification_nn(src_after_attention)
+        return att_weights_softmax, output
+        
+
+
 
 
 

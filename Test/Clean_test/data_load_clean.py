@@ -10,23 +10,23 @@ import torch
 from torchtext.data.utils import get_tokenizer
 
 
-""" Wtih this class the whole process of transformation from pickle 
-files to raw data files with the desired input format as well as the 
-preparation until the final tensors (input, target and mask) ready 
-to be passed to our model will be done.
+""" In this file, the whole data pre-processing transformation from pickle files to raw data files with the desired input format,
+as well as the final DataLoaders with all the required tensors (inputs, targets, masks, labels, etc.) ready to be passed to our 
+models will be done."""
 
-Parameters:
-- output_dir: Directory where raw data files will be saved.
-- num_bins: Number of m/z bins used to divide each spectra.
-- peak_filter: Proportion of bins kept with highest intensity.
-- input_size: Maximum length allowed for the input and target of the
-    model."""
-    
+
+# DATA VISUALIZATION AS DF
+
 def unpickle_to_df(pickle_dir, output_dir):
     """Function to be able to get the data from computerome as csv format to
     be able to use the visualize it as a dataframe in jupyter notebook. 
-    Comment: Just used to ensure a pattern on the data to avoid the 10 first scans
-    before doing the 3 rows jump to remove the "magic" scans."""
+    
+    Parameters:
+    - pickle_dir: Directory where the pickle files are found.
+    - output_dir: Directory where the csv file will be saved.
+
+    Comment: Dummy fucntion just used to ensure a pattern on the data to avoid 
+    the 10 first scans before doing the 3 rows jump to remove the "magic" scans."""
 
     for filename in os.listdir(pickle_dir):
         x = open(pickle_dir + filename, 'rb')
@@ -41,15 +41,20 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
     input_size: int = 512,  CLS_token: bool = True, add_ret_time: bool = True, \
     descending_order: bool = False):
 
-    """Function to get all pickle files from input_dir to convert to 
-    raw data files with bin numbers on the output_dir with the desired
-    format.
+    """Function to get all pickle files from input_dir to convert to raw data files 
+    with bin numbers on the output_dir with the desired format.
     
     Parameters:
-    - input_dir: Directory where pickle files are found.
+    - input_dir: Directory where the pickle files are found.
+    - output_dir: Directory where raw data files will be saved.
+    - num_bins: Number of m/z bins used to divide each spectra.
+    - peak_filter: Proportion of highest intensity peaks kept.
+    - input_size: Maximum "sentence" length allowed for the input and target of the model.
+    - CLS_token: Boolean to choose if we want to add [CLS] token at the beginning of the
+    sentence.
     - add_ret_time: Boolean for adding retention time to the input sentence.
     - descending_order: Boolean to order our peaks on intensity.
-    - CLS_token: Boolean to choose if we want to add [CLS] token beginning sentence."""
+    """
 
     # Parse scans
     # Set up bins (from 299.9 to 1650 due to manual inspection of spectra)
@@ -57,28 +62,21 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
     bins = np.linspace(299.9, 1650, num=num_bins)
     
     for filename in os.listdir(input_dir): 
-        if filename != '20190525_QE10_Evosep1_P0000005_LiNi_SA_Plate3_A7.raw.pkl':
+        if filename != '20190525_QE10_Evosep1_P0000005_LiNi_SA_Plate3_A7.raw.pkl': # Giving issues after manual inspection
             x= pickle.load(open(input_dir + filename, "rb"))
-            output_file = open(output_dir + filename[:-4], "w") 
-            # [:-4] because otherwise ".pkl" extension would be added
+            output_file = open(output_dir + filename[:-4], "w")  # [:-4] because otherwise ".pkl" extension would be added
 
-            # Initialize counters and empty lists
-            #bad = 0; good = 0; 
-            #thresholds_list = []; 
             token_list = []
-            x = x.iloc[9::3, [1,5,6]] # we get rid of the "algorithm warmup" and "magic" scans 
+            x = x.iloc[9::3, [1,5,6]] # we get rid of the "algorithm warmup" and "magic" scans (obtained when visualizing df obtained from unpickle_to_df)
             for i in range(len(x)):
-                #ret_time = x.iloc[i,0]
-                mass_spec_scan = x.iloc[i,0] # get scan number (but we lose specific retention time)
-                # but adding retention time makes vocab definition as complex as if we added intensities
+                mass_spec_scan = x.iloc[i,0] # get scan number (but we lose specific retention time) (column 0 would be ret_time)
+                # but adding retention time would make vocab definition as complex as if we added intensities --> TODO!!: Consider the 2D embedding in continuous space from Henry's poster
                 mz_array = x.iloc[i,1]
                 inten_array = x.iloc[i,2]
 
                 # Initialize token list including the [CLS] token and retention time as well as some special tokens
-                
                 cls_token = ['[CLS]']
                 ret_time = [str(mass_spec_scan), '[SEP]']
-
                 ret_time_spec = []
 
                 if CLS_token:
@@ -88,16 +86,10 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
                     ret_time_spec.extend(ret_time)
                 
                 # skip if it starts with 900 m/z as this is an artefact in the machine
-                #if mz_array[0] > 900:
-                #    bad += 1
-                #    continue
-                #else:
                 if mz_array[0] < 900:
-                    #good += 1
                     # masking out the lower peaks' proportion ( !!TODO: at some point calculate mass over charge ratio)
                     if peak_filter != 1:
                         threshold = np.quantile(inten_array, np.array([1-peak_filter]))[0]
-                        #thresholds_list.append(threshold)
                         mask = np.ma.masked_where(inten_array<threshold, inten_array) # mask bottom 90% peaks that are below the threshold
                         mz_masked_array = np.ma.masked_where(np.ma.getmask(mask), mz_array)
                         inten_masked_array = np.ma.masked_where(np.ma.getmask(mask), inten_array)
@@ -116,8 +108,7 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
                         sorted_arrays = sorted(zipped_arrays, reverse = True)  
                         mz_token_array = [element for _,element in sorted_arrays]
                         
-                    ##TODO!: Add intensities in the "sentence"? 
-                    # Tricky to create voabulary of intensities
+                    ##TODO!: Add intensities in the "sentence"? # Tricky to create voabulary of intensities
 
                     tokens_string =  [str(int) for int in mz_token_array]
                     
@@ -127,9 +118,10 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
                 # Maximum input size for BERT is 512 
                 if len(ret_time_spec) > (input_size - 1): # -1 as '[EOS]' token will be added later 
                     ret_time_spec = ret_time_spec[:(input_size -1)] 
+                # Some of the scans will have more than 512 "peaks"/bins, while others will have less --> padding is needed later
                 
                 # Add [EOS] token to allow model differentiate between [SEP] for ret_time and end of scan
-                ret_time_spec.extend(['[EOS]']) 
+                ret_time_spec.extend(['[EOS]']) # TODO!!: Really relevant to add [EOS] token if not used during training?
             
                 # Save to raw data text file
                 out_string = ' '.join(ret_time_spec)
@@ -143,7 +135,12 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
 ## DATA PRE_PROCESSING FUNCTIONS prior to model usage
 
 def divide_train_val_samples(files_dir, train_perc, val_perc):
-    # Divide samples into train and validation by specifying the percentage for each
+    """Divide samples into train and validation samples by specifying the percentage for each.
+
+    Parameters: 
+    - Files_dir: Directory where raw data files are found.
+    - Train_perc: Percentage of samples in specified directory that will be used for training.
+    - Val_perc: Percentage of samples in specified directory that will be used for validation."""
 
     samples_list = os.listdir(files_dir)
 
@@ -160,21 +157,23 @@ def divide_train_val_samples(files_dir, train_perc, val_perc):
 
 def create_training_dataset(sample, vocab, samples_dir, num_bins, \
      CLS_token: bool = True, input_size: int = 512):
-    """Function to process the raw data from text files with peak numbers 
-    to the tensors that will be passed as input, target and mask.
+    """Function to process the raw data from text files with peak numbers to the tensors that 
+    will be passed as input, target, mask and labels, as part of the DataLoaders.
     This includes padding and masking.
 
-    Division between training and testing will be done in the main code.
-    
     Parameters:
     - sample: Which sample --> file will be processed.
     - vocab: The specific vocabulary of our model. Default: will be defined
     in the main code but will be the number of bins plus some special tokens.
-    - cls_token: Boolean to define the masking system and avoid masking any special character."""
+    - samples_dir: Directory where the files are found. 
+    - num_bins: Number of m/z bins used to divide each spectra. (Used for the masking)
+    - cls_token: Boolean to define the masking system and avoid masking any special character.
+    - input_size: Maximum "sentence" length allowed for the input and target of the model. In 
+    this case used for padding those sentences that aren't long enough."""
 
     # helper function to pad
     def pad_tokens(sentence, pad='[PAD]'):
-        '''Pad list to at least n length and get mask accordingly'''
+        '''Pad list to input_size and get mask accordingly.'''
         mask = []
         if len(sentence) < input_size:
             pad_len = input_size-len(sentence)
@@ -204,32 +203,31 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     target = [vocab(item) for sublist in target_iter for item in sublist]
     attention_mask = [item for sublist in att_mask_iter for item in sublist]
 
-    # convert to list of tensors
-    
+    # convert to list of tensors    
     target_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in target]
     attention_mask_tensor = [torch.tensor(L, dtype=torch.bool) for L in attention_mask]
 
     # helper function to generate masked input
     def mask_input(input, CLS_token):
-        j = 3 if CLS_token else 2
+        j = 3 if CLS_token else 2 # not masking [CLS] token if present
         masked_indices = []
         for i in range(len(input)-(j+1)): # To not mask the ret_time nor the [EOS], [SEP] tokens
             if input[i+j] != '[PAD]':
-                if random.random() < 0.15:
+                if random.random() < 0.15: # 15% tokens will be masked
                     second_random = random.random()
-                    if second_random < 0.8:
-                        input[i+j] = '[MASK]'
-                        masked_indices.append(i+2) 
-                    elif 0.8 <= second_random < 0.9:
+                    if second_random < 0.8: # of the 15%, 80% will be changed to [MASK] token
+                        input[i+j] = '[MASK]' 
+                        masked_indices.append(i+j) # save masked positions that will be used later when training the model
+                    elif 0.8 <= second_random < 0.9: # of the 15%, 10% is changed for a random value of the vocab
                         input[i+j] =  str(random.randint(0,(num_bins - 1)))  
                         masked_indices.append(i+j) 
                     else:
-                        masked_indices.append(i+j)             
+                        masked_indices.append(i+j) # last 10% of the 15% is left unchanged           
         yield input, masked_indices
 
     final_input = []; mask_indices = []
     for input_line in input:
-        for input, masked_indices in mask_input(input_line):
+        for input, masked_indices in mask_input(input_line, CLS_token):
             final_input.append([input])
             mask_indices.append(masked_indices)
     
@@ -242,13 +240,13 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
 
 
 def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool):
-    "Simplify dataset creation for training BERT in one function"
+    "Simplify 'DataLoader' creation for training BERT in one function"
 
     # Divide samples in training and validation sets
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
 
     # Create dataloaders considering the presence or not presence of CLS tokens for the masking, as well as the limited seq_length for 90% of training as mentioned in BERT paper
-    # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model )
+    # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model)
     train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token) for f in train_samples]
     # Create validation dataloader
     val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token) for f in val_samples]
@@ -260,20 +258,24 @@ def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage:
 
 def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
      labels_path = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
-    '''
-    Function that will return a dataframe containing the samples with their file name as first column,
-    The second column will be the class_param that we are considering for the classification (Group 2 by default),
+
+    """Function that will return a dataframe containing the samples with their file name as first column,
+    The second column will be the class_param that we are considering for the classification (Group 2 by default --> Healthy vs ALD),
     and the last one is the factorization of the strings for class_param to numbers.
-    '''
-    # Get dir of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
+
+    Parameters:
+    - Fine_tune_files: Files/Samples taht will be used for the fine-tuning.
+    - Class_param: Parameter that will be used for the classification later.
+    - Labels_path: Pathway to the file where data about samples is saved."""
+
+    # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
-    labels_df = pd.read_csv(labels_path, usecols=["File name", class_param])
-    #print(labels_df['File name'][0])
-    #if labels_df.index[labels_df['File name'] == '[473] 20190615_QE10_Evosep1_P0000005_LiNi_SA_Plate6_A2.htrms.PG.Quantity']:
+    labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param])
+
+    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in 
+    labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
     
-    #labels_df = labels_df[labels_df[class_param] != 'QC']
-    
-    # Due to some data format, we need to get rid of the first 4 characters of each File_name for later matching purposes with proper file name
+    # Due to some data format, we need to get rid of the first 4 and last 18 characters of each File_name for later matching purposes with proper file name
     beginning_file_name = labels_df['File name'].str.find(']') + 2
     for i in range(len(labels_df)):
         labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18] 
@@ -283,19 +285,23 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
     # If we want to save the original class name and know its id
     #category_id_df = df[[class_param, 'class_id']].drop_duplicates()
     #category_to_id = dict(category_id_df.values)
-    
-    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)]
 
     return labels_df
 
 
 # Get datasets:
+
 def get_labels(df, samples_list):
-    # Function to get the label for each sample (file) that is part of a list of interest with file names within a df
+    """Function to get the label for each sample that is part of a list of interest with file names within the labels_df.
+
+    Parameters:
+    - df: Dataframe where labels for each file/sample is found.
+    - samples_list: List of samples to consider."""
+
     labels = []; out_samples = []
-    for i,f in enumerate(samples_list):
+    for f in samples_list:
         if f[:-4] not in df.values: # In case some of the samples selected are QC
-            out_samples.append(f) # so there are no matching errors when getting val_finetune_ds because a label has been removed
+            out_samples.append(f) # so there are no matching errors when getting finetune_ds because a sample has been removed
         else:
             index = df.index[df['File name'] == f[:-4]]
             labels.append(df.at[index[0], 'class_id'])
@@ -305,10 +311,21 @@ def get_labels(df, samples_list):
 
 
 def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int = 512):
+    """Function to process the raw data from text files with peak numbers to the tensors that 
+    will be passed as input and target, as part of the DataLoaders.
+    This is for the classification task.
 
+    Parameters:
+    - sample: Which sample --> file will be processed.
+    - vocab: The specific vocabulary of our model. Default: will be defined
+    in the main code but will be the number of bins plus some special tokens.
+    - samples_dir: Directory where the files are found. 
+    - label: Label of the given sample obtained from labels_df.
+    - input_size: Maximum "sentence" length allowed for the input of the model. In 
+    this case used for padding those sentences that aren't long enough."""
     # helper function to pad
     def pad_tokens(sentence, pad='[PAD]'):
-        '''Pad list to at least n length'''
+        '''Pad list to input_size.'''
         if len(sentence) < input_size:
             pad_len = input_size-len(sentence)
             sentence.extend([pad]*pad_len)
@@ -341,6 +358,7 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int
 
 def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, class_param: str = 'Group2', \
     labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
+    "Simplify 'DataLoader' creation for fine-tuning BERT in one function."
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples

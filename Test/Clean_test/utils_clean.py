@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 # VOCABULARY DEFINITION
 def get_vocab(num_bins):
-    # Define vocab required for the input of our fine-tuning
+    """Define vocab used for our model defining the number of bins used to bin the scans."""
     all_tokens = []
     for i in range(num_bins):
         all_tokens.append([str(i)])
@@ -34,29 +34,50 @@ flatten_sample = lambda sample,dimension:[spectra for spectra in sample[dimensio
 
 # BERT TRAINING
 
-def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: float, \
-    limited_seq_len: int, log_interval: int, device, scaler = None):
+def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: int, \
+    limited_seq_len: int, shorter_len_perc: int, log_interval: int, device, scaler = None):
+    """Training function for the training of BERT.
+
+    Parameters:
+    - model: nn.Module used to define the BERT model we want to train.
+    - optimizer: optimizer used for training the model. Default: AdamW.
+    - criterion: Criterion used for the backpropagation. Default: CrossEntropy.
+    - scheduler: Learning rate scheduler to implement warmup and later decay as defined in BERT paper.
+                 Default: class BERTscheduler defined in architectures.
+    - dataset: Dataset used for the training.
+    - results_file: Pathway to file where errors will be written.
+    - batchsize: Batchsize defined for the training.
+    - current_epoch: Number of epoch within training for sentence shortening purposes.
+    - total_epochs: Number of total epochs for sentence shortening purposes.
+    - limited_seq_len: Length of sentences during the training process we shorten the sentences.
+                Comment: Process done 90% training in original BERT paper to accelerate training.
+    - shorter_len_perc: Percentage training that we want the sentences to be shortened.
+    - log_interval: batch interval we want to use to write loss status among other values.
+    - device: Device where code is running. Either cpu or cuda
+    - scaler: Scaler used to optimize training time by reducing from float32 to float16 where possible.
+     """
 
     model.train()  # turn on train mode
     total_loss = 0.
-    epoch_status = round(current_epoch/total_epochs, 2)
+    epoch_status = round(current_epoch/total_epochs, 2) # Get training stage to do sequence shortening if required
     start_time = time.time()
 
-    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len)
-    
-    inside_train_error = []
+    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
+    # Batching data after randomizing the order among all the scans of all the training samples with the defined batch size
+    # QUESTION: Should the batching be done outside the train loop and use the same batches for all epochs?
 
     for batch in range(num_batches):
-        with torch.cuda.amp.autocast():
+        with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type): # optimize training time with scaler (float32 --> float16)
             output = model(inputs[batch].to(device), src_mask[batch].to(device))
 
             loss = 0
-            for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions
+            for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
                 single_output = output[:, data_sample] 
                 single_target = targets[batch][:, data_sample]
                 labels_output = labels[batch][data_sample]
 
-                mask_mapping = map(single_output.__getitem__, labels_output)
+                # Get just output and target in masked positions, which are the ones used for training our model
+                mask_mapping = map(single_output.__getitem__, labels_output) 
                 batch_output = torch.stack(list(mask_mapping)).to(device)
 
                 target_mapping = map(single_target.__getitem__, labels_output)
@@ -72,31 +93,48 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
         total_loss += loss.item()
 
         if batch % log_interval == 0 and batch > 0:
-            lr = scheduler.get_last_lr()[0]
+            lr = scheduler.get_lr()
             ms_per_batch = (time.time() - start_time) * 1000 / log_interval
             cur_loss = total_loss / log_interval
-            inside_train_error.append(cur_loss)
             results_file.write(f'| epoch {current_epoch:3d} | {batch:5d}/{num_batches:5d} batches | '
-                    f'lr {lr:02.2f} | ms/batch {ms_per_batch:5.2f} | '
+                    f'lr {lr:02.5f} | ms/batch {ms_per_batch:5.2f} | '
                     f'loss {cur_loss:5.2f} \n')     
             results_file.flush()
             total_loss = 0
             start_time = time.time()
 
-    return mean(inside_train_error), cur_loss
+        scheduler.step()
+
+    return total_loss/num_batches
 
 
 def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: float, \
-    limited_seq_len: int, start_time, device) -> float:
+    limited_seq_len: int, shorter_len_perc: int, start_time, device) -> float:
+    """Evalutation function for the training of BERT.
+
+    Parameters:
+    - model: nn.Module used to define the BERT model we want to train.
+    - criterion: Criterion used for the backpropagation. Default: CrossEntropy.
+    - dataset: Dataset used for the training.
+    - results_file: Pathway to file where errors will be written.
+    - batchsize: Batchsize defined for the training.
+    - current_epoch: Number of epoch within training for sentence shortening purposes.
+    - total_epochs: Number of total epochs for sentence shortening purposes.
+    - limited_seq_len: Length of sentences during the training process we shorten the sentences.
+                Comment: Process done 90% training in original BERT paper to accelerate training.
+    - shorter_len_perc: Percentage training that we want the sentences to be shortened.
+    - start_time: Start time of the epoch for simple time control on the results_file.
+    - device: Device where code is running. Either cpu or cuda
+     """
 
     model.eval()  # turn on evaluation mode
     epoch_status = round(current_epoch/total_epochs, 2)
     total_loss = 0.
     
-    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len)
+    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
     with torch.no_grad():
         for batch in range(num_batches):
-            with torch.cuda.amp.autocast():
+            with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
                 output = model(inputs[batch].to(device), src_mask[batch].to(device))
                 loss = 0
                 for data_sample in range(batchsize):
@@ -123,20 +161,17 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
           f'default validation loss {default_val_loss:5.2f}| validation loss {val_loss:5.2f} \n')
     results_file.flush()
 
-    return default_val_loss, val_loss
+    return val_loss
 
 
 def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorter_len_perc):
-    # Create function to divide input, target, att_mask for each dataloader
-
+    # Create function to divide input, target, att_mask and labels in batches
     # Transpose by .t() method because we want the size [seq_len, batch_size]
+
     # This function returns a list with len num_batches = len(input_data) // batchsize
-    # where each element of this list contains a tensor of size [seq_len, batch_size]
+    # where each element of this list contains a tensor of size [seq_len, batch_size] or transposed
     # Thus, looping through the whole list with len num_batches, we are going through 
     # the whole dataset, but passing it to the model in tensors of batch_size.
-
-    # epoch status sera un numero que vindra de round(epich_actual / total_epochs) per fer lo de la 
-    # len diferent de 128 a 512 per a aaccelerar el training
 
     input_data = flatten_list(data_ds, 0)
     target_data = flatten_list(data_ds, 1)
@@ -151,7 +186,6 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
         random.shuffle(indices)
 
     for batch in range(num_batches):
-        #batch = random.sample(range(0,len(input_data)), batchsize)
         batch_indices = []
 
         for j in range(batchsize):
@@ -195,20 +229,20 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
 
         inputs, class_labels, num_batches = get_finetune_batch(dataset[sample], batchsize, same_sample)
 
-        #num_class_spectra = top_attention_perc * len(inputs)
+        #num_class_spectra = top_attention_perc * len(inputs) TODO!! Just consider x% most relevant scans determined by attention
 
         inside_train_error = []
         hidden_vectors_sample = []
-
-        for batch in range(num_batches):    
-            hidden_vectors_batch = BERT_model(inputs[batch].to(device))
-            hidden_vectors_sample.append(hidden_vectors_batch)
-        #print('BERT output size: ', hidden_vectors_sample[0].size())
-        #print('Attention layer input size: ', torch.cat(hidden_vectors_sample).size())
-        att_weights, output = finetune_model(torch.cat(hidden_vectors_sample).to(device))
-        #print('Final output size: ', output.size())
-        
-        att_weights_matrix.append(att_weights)
+        with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
+            for batch in range(num_batches):  
+                hidden_vectors_batch = BERT_model(inputs[batch].to(device))
+                hidden_vectors_sample.append(hidden_vectors_batch)
+            #print('BERT output size: ', hidden_vectors_sample[0].size())
+            #print('Attention layer input size: ', torch.cat(hidden_vectors_sample).size())
+            att_weights, output = finetune_model(torch.cat(hidden_vectors_sample).to(device))
+            #print('Final output size: ', output.size())
+            
+            att_weights_matrix.append(att_weights)
         '''
         max_size = max([len(sample) for sample in att_weights_matrix])
         best_att_weights_matrix = [tensor.tolist() for tensor in att_weights_matrix]
@@ -251,7 +285,7 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
             results_file.flush()
             total_loss = 0
             start_time = time.time()
-    
+
     return inside_train_error, att_weights_matrix
 
 
@@ -271,7 +305,6 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
             total_loss += loss.item()
         
     val_loss = total_loss / num_batches
-
     elapsed = time.time() - start_time
 
     results_file.write(f'| end of epoch {current_epoch:3d} | time: {elapsed:5.2f}s | '
@@ -391,9 +424,9 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
     plt.legend(handles=scatter.legend_elements()[0], labels = ['Healthy', 'ALD'], title="Patients status")
     plt.title('UMAP projection of the embedding space by patients', fontsize=14)
-    plt.savefig(os.getcwd() + '/Embedding.png')
-    plt.show()
-    #plt.savefig('/home/projects/cpr_10006/people/enrcop/Figures/BERT_vanilla_HPvsALD.png')
+    plt.savefig('/home/projects/cpr_10006/people/enrcop/Figures/Embeddings/BERT_vanilla_HPvsALD.png')
+    #plt.savefig(os.getcwd() + '/Embedding.png')
+    #plt.show()
       
 
 

@@ -1,3 +1,5 @@
 Test/pickle_data/*
 Test/raw_data/*
 Test/test_data/*
+models/*
+Dummy_results/*
