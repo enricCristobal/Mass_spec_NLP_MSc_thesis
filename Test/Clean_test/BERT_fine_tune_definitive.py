@@ -19,11 +19,13 @@ vocab = get_vocab(num_bins=50000)
 
 # Define file where loss results will be saved and directory where sample files are found
 evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/finetuning_loss_vanilla.txt')
-#files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/scan_desc_tokens_CLS/'
-# labels_path define correctly default DataLoader function in data_load_clean
+files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/scan_desc_tokens_CLS/'
+# !!labels_path define correctly default DataLoader function in data_load_clean
 ##LOCAL PATHWAY
-files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\' 
-train_finetune_ds, val_finetune_ds, num_labels = FineTuneBERTDataLoader(files_dir, vocab, training_percentage=0.6, validation_percentage=0.3, labels_path=files_dir + 'ALD_histological_scores.csv')
+#files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\' 
+train_finetune_ds, val_finetune_ds, num_labels = FineTuneBERTDataLoader(files_dir, vocab, training_percentage=0.6, validation_percentage=0.3, \
+class_param = 'Group2') # Group2 is equivalent to Healthy vs ALD
+
 # Create the model network
 #n_input_features = pre_model.state_dict()['encoder.weight'].size()[1] #Get d_model from BERT state_dict (encoder layer will always have this size)
 # Old hyperparameters to load the BERT model
@@ -38,9 +40,9 @@ BERT_model = BERT_trained(ntoken = len(vocab),
             dropout = 0.1).to(device)
 
 # Load BERT weights
-#BERT_model.load_state_dict(torch.load('/home/projects/cpr_10006/people/enrcop/models/bert_vanilla_small_weights.pt'))
 ##LOCAL PATHWAY
-model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
+#model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
+model_weights = '/home/projects/cpr_10006/people/enrcop/models/bert_vanilla_small_weights.pt'
 BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
  # This way BERT weights are frozen through the finetuning training
 
@@ -79,10 +81,15 @@ for epoch in range(1, epochs + 1):
     if val_loss < best_val_loss:
         best_val_loss = val_loss
         best_att_weights_matrix = update_best_att_matrix(att_weights_matrix)
-        #torch.save(model.state_dict(), '/home/projects/cpr_10006/people/enrcop/models/finetune_vanillabert_binary_HPvsALD.pt')
+        torch.save(model.state_dict(), '/home/projects/cpr_10006/people/enrcop/models/BERT_finetune/BERT_vanilla/bert_Group2_HPvsALD.pt')
 
-plot_finetuning_error(epochs, training_error, validation_error, pathway=os.getcwd() + '/finetune_error.png')
-plot_att_weights(best_att_weights_matrix, pathway=os.getcwd() + '/att_weights.png')
+#error_plot_pathway = os.getcwd() + '/finetune_error.png'
+#att_weights_pathway = os.getcwd() + '/att_weights.png'
+error_plot_pathway = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_finetune/BERT_vanilla/Group2_HPvsALD/finetune_error2.0.png'
+att_weights_pathway = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_finetune/BERT_vanilla/Group2_HPvsALD/att_weights_mean2.0.png'
+
+plot_finetuning_error(epochs, training_error, validation_error, pathway=error_plot_pathway)
+plot_att_weights(best_att_weights_matrix, pathway=att_weights_pathway)
 
 evolution_file.close()
 

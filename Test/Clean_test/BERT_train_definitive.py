@@ -16,11 +16,11 @@ num_bins = 50000
 vocab = get_vocab(num_bins)
 
 # Get Data specifying the directory where raw data is or we want to store
-files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\'
-#files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/scan_desc_tokens_CLS/'
+#files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\'
+files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/scan_desc_tokens_CLS/'
 train_ds, val_ds = TrainingBERTDataLoader(files_dir, vocab, num_bins, training_percentage=0.7, validation_percentage=0.2, CLS_token=True)
-evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
-#evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_cls_ret_halfsize.txt', "w")
+#evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
+evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_cls_ret_halfsize.txt', "w")
 
 # Define the model network for training BERT model
 
@@ -75,9 +75,12 @@ for epoch in range(1, n_epochs + 1):
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'loss': train_loss
-                    }, 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\bert_model.pt')
-                    #}, '/home/projects/cpr_10006/people/enrcop/models/bert_model_vanilla.pt')
+                    #}, 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\bert_model.pt')
+                    }, '/home/projects/cpr_10006/people/enrcop/models/train/BERT_half_noCLS_norettime.pt')
 
-plot_BERT_training_error(n_epochs, training_error, validation_error, pathway= 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\test.png')#'/home/projects/cpr_10006/people/enrcop/Figures/BERT_error.png')
+#save_plot = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\test.png'
+save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_train/BERT_half_noCLS_norettime.png'
+
+plot_BERT_training_error(n_epochs, training_error, validation_error, pathway=save_plot)
 
 evolution_file.close()

@@ -278,7 +278,7 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
         labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18] 
  
     labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in     
-    labels_df = labels_df[labels_df["Group2"] != 'QC'] # Get rid of the quality controls
+    labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
 
     labels_df['class_id'] = labels_df[class_param].factorize()[0]
     
