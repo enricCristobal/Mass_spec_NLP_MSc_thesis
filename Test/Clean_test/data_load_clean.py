@@ -272,14 +272,14 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
     labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param])
 
-    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in 
-    labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
-    
     # Due to some data format, we need to get rid of the first 4 and last 18 characters of each File_name for later matching purposes with proper file name
     beginning_file_name = labels_df['File name'].str.find(']') + 2
     for i in range(len(labels_df)):
         labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18] 
-    
+ 
+    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in     
+    labels_df = labels_df[labels_df["Group2"] != 'QC'] # Get rid of the quality controls
+
     labels_df['class_id'] = labels_df[class_param].factorize()[0]
     
     # If we want to save the original class name and know its id
@@ -362,10 +362,9 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples
-
+    
     labels_df = fine_tune_ds(finetune_samples, class_param, labels_path)
-    #print(labels_df)
-
+  
     # TODO!!: Issues regarding imbalanced dataset!!! Could be fixed using weight in cross entropy loss
 
     #print(len(labels_df.index[labels_df['class_id'] == 0]))

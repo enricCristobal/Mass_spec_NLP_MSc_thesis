@@ -72,11 +72,11 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
 
             loss = 0
             for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
-                single_output = output[:, data_sample] 
-                single_target = targets[batch][:, data_sample]
-                labels_output = labels[batch][data_sample]
+                single_output = output[:, data_sample] # predicted output by BERT and decoder
+                single_target = targets[batch][:, data_sample] # expected target for this spectrum
+                labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
 
-                # Get just output and target in masked positions, which are the ones used for training our model
+                # Get just output and target in masked positions, which are the ones that must be used for training our model
                 mask_mapping = map(single_output.__getitem__, labels_output) 
                 batch_output = torch.stack(list(mask_mapping)).to(device)
 
@@ -103,7 +103,7 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
             total_loss = 0
             start_time = time.time()
 
-        scheduler.step()
+        scheduler.step() # As it is done in BERT paper, we change learning rate at each batch/step
 
     return total_loss/num_batches
 
@@ -165,13 +165,13 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
 
 
 def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorter_len_perc):
-    # Create function to divide input, target, att_mask and labels in batches
-    # Transpose by .t() method because we want the size [seq_len, batch_size]
+    """Create function to divide input, target, att_mask and labels in batches
+     Transpose by .t() method because we want the size [seq_len, batch_size]
 
-    # This function returns a list with len num_batches = len(input_data) // batchsize
-    # where each element of this list contains a tensor of size [seq_len, batch_size] or transposed
-    # Thus, looping through the whole list with len num_batches, we are going through 
-    # the whole dataset, but passing it to the model in tensors of batch_size.
+    This function returns a list with len num_batches = len(input_data) // batchsize
+    where each element of this list contains a tensor of size [seq_len, batch_size] or transposed
+    Thus, looping through the whole list with len num_batches, we are going through 
+    the whole dataset, but passing it to the model in tensors of batch_size."""
 
     input_data = flatten_list(data_ds, 0)
     target_data = flatten_list(data_ds, 1)
@@ -295,16 +295,16 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
     finetune_model.eval()
     total_loss = 0.
     # For validation, we don't just pass one sample at a time, but randomize
-    inputs, class_labels, num_batches = get_finetune_batch(dataset, batchsize, same_sample = False)
+    inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
     
     with torch.no_grad():
-        for batch in range(num_batches):
+        for batch in range(len(inputs)): # len(inputs) == num_batches
             hidden_vectors = BERT_model(inputs[batch].to(device))
             _, output = finetune_model(hidden_vectors.to(device))
             loss = criterion(output, class_labels[batch].to(device))
             total_loss += loss.item()
         
-    val_loss = total_loss / num_batches
+    val_loss = total_loss / len(inputs)
     elapsed = time.time() - start_time
 
     results_file.write(f'| end of epoch {current_epoch:3d} | time: {elapsed:5.2f}s | '
@@ -315,8 +315,9 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
 
 
 def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool): 
-    # Used for fine-tuning when both mixing spectra from different samples under the same batch and not (same_sample boolean)
-    # We consider the input is already just one sample
+    """Used for fine-tuning when both mixing spectra from different samples under the same batch and not (same_sample boolean)
+    We consider the input is already just one sample"""
+
     flatten = flatten_sample if same_sample == True else flatten_list
     input_data = flatten(sample_data_ds, 0)
     labels_data = flatten(sample_data_ds, 1)
@@ -345,11 +346,11 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
         input_batch.append(torch.stack([input_data[index] for index in batch_indices]).t())
         labels_batch.append(torch.stack([labels_data[index] for index in batch_indices]))
 
-    return input_batch, labels_batch, num_batches_final
+    return input_batch, labels_batch
 
 
 def update_best_att_matrix(att_weights_matrix):
-    # Save the attention weights for this best performing model
+    """Save the attention weights for this best performing model"""
     max_size = max([len(sample) for sample in att_weights_matrix])
     best_att_weights_matrix = [tensor.tolist() for tensor in att_weights_matrix]
     for sample in best_att_weights_matrix:
@@ -393,32 +394,31 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
 
     model.eval()
-    reducer = umap.UMAP(n_neighbors=2)
+    reducer = umap.UMAP(n_neighbors=15)
     dataframe = []
 
     for sample in range(len(dataset)):
         #print('Sample number: ', sample + 1)
-        inputs, class_labels, num_batches = get_finetune_batch(dataset[sample], batchsize, same_sample=True)
-        
+        inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample=True)
+
         hidden_vectors_sample = []
-        for batch in range(num_batches):
-            #if batch == int(num_batches / 2):
-                #print('Half sample!') 
+        for batch in range(len(inputs)):
             hidden_vectors_batch = model(inputs[batch].to(device)) # torch.Tensor of size [batchsize x embed_size]
-            hidden_vectors_sample.append(hidden_vectors_batch.tolist())
+            hidden_vectors_sample.append(hidden_vectors_batch.tolist()) 
 
-        flat_hidden_vectors_sample = [scan for batched_scans in hidden_vectors_sample for scan in batched_scans]
+        hidden_vectors = [scan for batched_scans in hidden_vectors_sample for scan in batched_scans] # after appending all batches --> list ogf size [# scans/sample x embed_size]
 
+        # As preparation for the content "skeleton" of the database, name of sample for each of its scans, the number of scan ("ret_time"), and the label for each scan of the sample again (class_labels[0][0], because all will have the same for each sample)
         samples_and_time = list(map(list,zip([samples_names[sample]]*len(dataset[sample][0]), range(len(dataset[sample][0])), [class_labels[0][0].tolist()]*len(dataset[sample][0]))))
-        hidden_vectors = flat_hidden_vectors_sample
-        dataframe.append(list(map(list.__add__, samples_and_time, hidden_vectors)))
+        dataframe.append(list(map(list.__add__, samples_and_time, hidden_vectors))) # include embedding values for each scan of current sample
         
     flat_dataframe = [sample_scan for sample_dataframe in dataframe for sample_scan in sample_dataframe]
-    df = pd.DataFrame(flat_dataframe, columns = ['Sample_name', 'Scan_order', 'Label'] + list(range(hidden_vectors_batch.size()[1])))
-
+    df = pd.DataFrame(flat_dataframe, columns = ['Sample_name', 'Scan_order', 'Label'] + list(range(hidden_vectors_batch.size()[1]))) # creation of df colums with embed_size
+    # Size df is [# total scans over all samples x (3 + embed_size)]
     if aggregation_layer == "sample":
-        df = df.groupby('Sample_name').mean()
-
+        df = df.groupby('Sample_name').mean() # apply mean over each components for all embeddings part of the same sample
+        # df size now is [#samples x (3 + embed_size)]
+    ## !! QUESTION: Is this the proper way to approach it? Felix got good clustering applying mean, but mathematical meaning?
     embedding = reducer.fit_transform(df)
 
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
