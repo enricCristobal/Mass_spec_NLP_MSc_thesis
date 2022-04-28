@@ -159,7 +159,7 @@ class AttentionNetwork(nn.Module):
             att_linear = nn.Linear(n_input_features, self.n_units)
             att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
             fc_attention.append(att_linear)
-            fc_attention.append(F.gelu) # from reference nn.SELU() used(changed to GeLU)
+            fc_attention.append(nn.GELU()) # from reference nn.SELU() used(changed to GeLU)
             n_input_features = self.n_units
         
         att_linear = nn.Linear(n_input_features, 1)

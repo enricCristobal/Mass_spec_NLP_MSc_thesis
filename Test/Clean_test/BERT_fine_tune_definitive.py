@@ -42,7 +42,7 @@ BERT_model = BERT_trained(ntoken = len(vocab),
 # Load BERT weights
 ##LOCAL PATHWAY
 #model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
-model_weights = '/home/projects/cpr_10006/people/enrcop/models/bert_vanilla_small_weights.pt'
+model_weights = '/home/projects/cpr_10006/people/enrcop/models/BERT_train/BERT_vanilla_small/bert_vanilla_small_weights.pt'
 BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
  # This way BERT weights are frozen through the finetuning training
 

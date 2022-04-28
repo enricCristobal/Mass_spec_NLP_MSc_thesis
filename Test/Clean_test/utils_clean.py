@@ -227,21 +227,20 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
     att_weights_matrix = []
     for sample in range(len(dataset)):
 
-        inputs, class_labels, num_batches = get_finetune_batch(dataset[sample], batchsize, same_sample)
+        inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample)
 
         #num_class_spectra = top_attention_perc * len(inputs) TODO!! Just consider x% most relevant scans determined by attention
 
         inside_train_error = []
         hidden_vectors_sample = []
         with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
-            for batch in range(num_batches):  
+            for batch in range(len(inputs)):  
                 hidden_vectors_batch = BERT_model(inputs[batch].to(device))
                 hidden_vectors_sample.append(hidden_vectors_batch)
             #print('BERT output size: ', hidden_vectors_sample[0].size())
             #print('Attention layer input size: ', torch.cat(hidden_vectors_sample).size())
             att_weights, output = finetune_model(torch.cat(hidden_vectors_sample).to(device))
             #print('Final output size: ', output.size())
-            
             att_weights_matrix.append(att_weights)
         '''
         max_size = max([len(sample) for sample in att_weights_matrix])
@@ -279,7 +278,7 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
             #print(f'| epoch {epoch:3d} | {sample:2d}/{len(dataset):1d} samples | '
             #f'lr {learning_rate:02.5f} | ms/sample {ms_per_batch:5.2f} | '
             #f'loss {loss:5.2f} \n')
-            results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{num_batches:5d} batches | '
+            results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{len(inputs):5d} batches | '
             f'lr {learning_rate:02.2f} | ms/batch {ms_per_batch:5.2f} | '
             f'loss {loss:5.2f} \n')     
             results_file.flush()
@@ -389,7 +388,7 @@ def plot_att_weights(att_weights_matrix, pathway):
 
 
 def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
-             batchsize: int, aggregation_layer: string, device: torch.device):
+             batchsize: int, aggregation_layer: string, pathway: str, device: torch.device):
 
     assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
 
@@ -424,7 +423,7 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
     plt.legend(handles=scatter.legend_elements()[0], labels = ['Healthy', 'ALD'], title="Patients status")
     plt.title('UMAP projection of the embedding space by patients', fontsize=14)
-    plt.savefig('/home/projects/cpr_10006/people/enrcop/Figures/Embeddings/BERT_vanilla_HPvsALD.png')
+    plt.savefig(pathway)
     #plt.savefig(os.getcwd() + '/Embedding.png')
     #plt.show()
       
