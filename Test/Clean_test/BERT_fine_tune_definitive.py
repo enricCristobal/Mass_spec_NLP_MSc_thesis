@@ -71,7 +71,7 @@ for epoch in range(1, epochs + 1):
 
     inside_train_error, att_weights_matrix = BERT_finetune_train(BERT_model, model, optimizer, criterion, learning_rate=lr, 
     dataset=train_finetune_ds, results_file=evolution_file, batchsize=batchsize, epoch=epoch, log_interval = 1000, device=device,
-    same_sample=True, scaler=None)
+    same_sample=True, scaler=scaler)
 
     val_loss = BERT_finetune_evaluate(BERT_model, model, criterion, dataset=val_finetune_ds, batchsize=batchsize, device=device)
 

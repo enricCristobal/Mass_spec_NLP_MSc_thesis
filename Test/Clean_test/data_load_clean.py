@@ -156,7 +156,7 @@ def divide_train_val_samples(files_dir, train_perc, val_perc):
 ## TRAINING PART
 
 def create_training_dataset(sample, vocab, samples_dir, num_bins, \
-     CLS_token: bool, add_ret_time: bool, input_size: int = 512):
+     CLS_token: bool, add_ret_time: bool, input_size: int = 512, data_repetition: int = 1):
     """Function to process the raw data from text files with peak numbers to the tensors that 
     will be passed as input, target, mask and labels, as part of the DataLoaders.
     This includes padding and masking.
@@ -195,10 +195,11 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
 
     # Generate tokens and pad if needed
     input_iter = []; target_iter = []; att_mask_iter = []
-    for input_yield, target_yield, att_mask_yield in yield_tokens(sample):
-        input_iter.append([input_yield])
-        target_iter.append([target_yield])
-        att_mask_iter.append([att_mask_yield])
+    for _ in range(data_repetition): # we go through our data samples more than once, by masking in different places to give more data to the model
+        for input_yield, target_yield, att_mask_yield in yield_tokens(sample):
+            input_iter.append([input_yield])
+            target_iter.append([target_yield])
+            att_mask_iter.append([att_mask_yield])
     
     input = [item for sublist in input_iter for item in sublist]    
     target = [vocab(item) for sublist in target_iter for item in sublist]
@@ -212,9 +213,10 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     def mask_input(input, CLS_token, add_ret_time):
         j = 3 if CLS_token else 2 if add_ret_time else 0 # not masking [CLS] token if present
         masked_indices = []
-        for i in range(len(input)-(j+1)): # To not mask the ret_time nor the [EOS], [SEP] tokens
-            if input[i+j] != '[PAD]':
-                if random.random() < 0.15: # 15% tokens will be masked
+        for i in range(len(input) - j): # To not mask the ret_time nor the [SEP] tokens
+            #if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
+            if random.random() < 0.15: # 15% tokens will be masked
+                if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
                     second_random = random.random()
                     if second_random < 0.8: # of the 15%, 80% will be changed to [MASK] token
                         input[i+j] = '[MASK]' 
@@ -223,7 +225,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
                         input[i+j] =  str(random.randint(0,(num_bins - 1)))  
                         masked_indices.append(i+j) 
                     else:
-                        masked_indices.append(i+j) # last 10% of the 15% is left unchanged           
+                        masked_indices.append(i+j) # last 10% of the 15% is left unchanged        
         yield input, masked_indices
 
     final_input = []; mask_indices = []
@@ -240,7 +242,8 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     return input_tensor_list, target_tensor_list, attention_mask_tensor, mask_indices
 
 
-def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool, add_ret_time: bool):
+def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool,\
+     add_ret_time: bool, data_repetition: int = 1):
     "Simplify 'DataLoader' creation for training BERT in one function"
 
     # Divide samples in training and validation sets
@@ -248,9 +251,12 @@ def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage:
 
     # Create dataloaders considering the presence or not presence of CLS tokens for the masking, as well as the limited seq_length for 90% of training as mentioned in BERT paper
     # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model)
-    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, add_ret_time=add_ret_time) for f in train_samples]
+    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token,\
+         add_ret_time=add_ret_time, data_repetition=data_repetition) for f in train_samples]
+    
     # Create validation dataloader
-    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, add_ret_time=add_ret_time) for f in val_samples]
+    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, \
+        add_ret_time=add_ret_time, data_repetition=data_repetition) for f in val_samples]
 
     return train_ds, val_ds
 
@@ -272,7 +278,7 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
     - Labels_path: Pathway to the file where data about samples is saved."""
 
     assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis"], \
-        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner, defining kleiner_type' and 'nas_steatosis'"
+        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner', defining kleiner_type and 'nas_steatosis'"
     
     # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]

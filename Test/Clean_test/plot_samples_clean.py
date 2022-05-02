@@ -17,7 +17,7 @@ labels_dir = data_dir + 'ALD_histological_scores.csv'
 
 # Get the samples used for the ploting
 samples, _ = divide_train_val_samples(data_dir, 0.9, 0) # !!LOCAL THING: 0.9 to avoid histological scores csv file
-## !!TODO: For now we need to repeat this samples line because we call it later on the plotembedding function
+
 dataset, _, _ = FineTuneBERTDataLoader(data_dir, vocab, training_percentage=0.9, validation_percentage=0,\
     class_param='kleiner', kleiner_type = 'advanced', labels_path=labels_dir)
 

@@ -67,7 +67,7 @@ epochs = 5
 best_model = None
 
 for epoch in range(1, epochs + 1):
-    print('Epoch: ', epoch, '/', epochs +1)
+    #print('Epoch: ', epoch, '/', epochs +1)
     epoch_start_time = time.time()
 
     inside_train_error, att_weights_matrix = BERT_finetune_train(BERT_model, model, optimizer, criterion, learning_rate=lr, 

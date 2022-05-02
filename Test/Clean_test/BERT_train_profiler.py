@@ -19,11 +19,12 @@ with cProfile.Profile() as pr:
     vocab = get_vocab(num_bins)
 
     # Get Data specifying the directory where raw data is or we want to store
-    files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\'
+    files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_data\\'
     #files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/CLS_desc_rettime_tokens/'
-    train_ds, val_ds = TrainingBERTDataLoader(files_dir, vocab, num_bins, training_percentage=0.3, validation_percentage=0.2, CLS_token=True, add_ret_time=True)
-    evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
+    train_ds, val_ds = TrainingBERTDataLoader(files_dir, vocab, num_bins, training_percentage=0.5, validation_percentage=0.3, CLS_token=True, add_ret_time=True)
+    #evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
     #evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_cls_ret_halfsize.txt', "w")
+    evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_results.txt', "w")
 
     # Define the model network for training BERT model
 
@@ -38,7 +39,7 @@ with cProfile.Profile() as pr:
     # Define parameters for the training
 
     n_epochs = 2
-    batchsize = 24
+    batchsize = 3
     num_batches = len(flatten_list(train_ds, 0)) // batchsize
 
     criterion = nn.CrossEntropyLoss()
@@ -49,7 +50,7 @@ with cProfile.Profile() as pr:
     scheduler.step() # Initialize scheduler so lr starts warup from 0 as we want
 
     # Accelerating training time 
-    #scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None #lowering floating point precision when allowed
+    scaler = torch.cuda.amp.GradScaler() if device.type == 'cuda' else None #lowering floating point precision when allowed
     limited_seq_len = 128
     perc_epochs_shorter = 0.9
 
@@ -59,11 +60,12 @@ with cProfile.Profile() as pr:
     best_model = None
 
     for epoch in range(1, n_epochs + 1):
+        print('Epoch number: ', epoch)
         epoch_start_time = time.time()
 
         train_loss = BERT_train(model, optimizer, criterion, scheduler, dataset=train_ds, results_file=evolution_file, \
             batchsize = batchsize, current_epoch=epoch, total_epochs=n_epochs, limited_seq_len=limited_seq_len, \
-            shorter_len_perc=perc_epochs_shorter, log_interval=10, device=device, scaler=None)
+            shorter_len_perc=perc_epochs_shorter, log_interval=1000, device=device, scaler=scaler)
     
         val_loss = BERT_evaluate(model, criterion, dataset=val_ds, results_file=evolution_file, batchsize=batchsize,\
             current_epoch=epoch, total_epochs=n_epochs, limited_seq_len=limited_seq_len, shorter_len_perc=perc_epochs_shorter, \
@@ -83,8 +85,8 @@ with cProfile.Profile() as pr:
 
     #save_plot = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\test.png'
     #save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_train/BERT_half_noCLS_norettime.png'
-    save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/dummy_plots/train.png'
-    plot_BERT_training_error(n_epochs, training_error, validation_error, pathway=save_plot)
+    #save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/dummy_plots/train.png'
+    #plot_BERT_training_error(n_epochs, training_error, validation_error, pathway=save_plot)
 
 stats = pstats.Stats(pr)
 stats.sort_stats(pstats.SortKey.TIME)

@@ -3,3 +3,4 @@ Test/raw_data/*
 Test/test_data/*
 models/*
 Dummy_results/*
+Test/dummy_data/*
