@@ -156,7 +156,7 @@ def divide_train_val_samples(files_dir, train_perc, val_perc):
 ## TRAINING PART
 
 def create_training_dataset(sample, vocab, samples_dir, num_bins, \
-     CLS_token: bool = True, input_size: int = 512):
+     CLS_token: bool, add_ret_time: bool, input_size: int = 512):
     """Function to process the raw data from text files with peak numbers to the tensors that 
     will be passed as input, target, mask and labels, as part of the DataLoaders.
     This includes padding and masking.
@@ -168,6 +168,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     - samples_dir: Directory where the files are found. 
     - num_bins: Number of m/z bins used to divide each spectra. (Used for the masking)
     - cls_token: Boolean to define the masking system and avoid masking any special character.
+    - add_ret_time: Boolean for adding retention time to the input sentence.
     - input_size: Maximum "sentence" length allowed for the input and target of the model. In 
     this case used for padding those sentences that aren't long enough."""
 
@@ -208,8 +209,8 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     attention_mask_tensor = [torch.tensor(L, dtype=torch.bool) for L in attention_mask]
 
     # helper function to generate masked input
-    def mask_input(input, CLS_token):
-        j = 3 if CLS_token else 2 # not masking [CLS] token if present
+    def mask_input(input, CLS_token, add_ret_time):
+        j = 3 if CLS_token else 2 if add_ret_time else 0 # not masking [CLS] token if present
         masked_indices = []
         for i in range(len(input)-(j+1)): # To not mask the ret_time nor the [EOS], [SEP] tokens
             if input[i+j] != '[PAD]':
@@ -227,7 +228,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
 
     final_input = []; mask_indices = []
     for input_line in input:
-        for input, masked_indices in mask_input(input_line, CLS_token):
+        for input, masked_indices in mask_input(input_line, CLS_token, add_ret_time):
             final_input.append([input])
             mask_indices.append(masked_indices)
     
@@ -239,7 +240,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     return input_tensor_list, target_tensor_list, attention_mask_tensor, mask_indices
 
 
-def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool):
+def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool, add_ret_time: bool):
     "Simplify 'DataLoader' creation for training BERT in one function"
 
     # Divide samples in training and validation sets
@@ -247,16 +248,16 @@ def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage:
 
     # Create dataloaders considering the presence or not presence of CLS tokens for the masking, as well as the limited seq_length for 90% of training as mentioned in BERT paper
     # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model)
-    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token) for f in train_samples]
+    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, add_ret_time=add_ret_time) for f in train_samples]
     # Create validation dataloader
-    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token) for f in val_samples]
+    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, add_ret_time=add_ret_time) for f in val_samples]
 
     return train_ds, val_ds
 
 
 #FINE-TUNING PART
 
-def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
+def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
      labels_path = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
 
     """Function that will return a dataframe containing the samples with their file name as first column,
@@ -266,28 +267,49 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2',\
     Parameters:
     - Fine_tune_files: Files/Samples taht will be used for the fine-tuning.
     - Class_param: Parameter that will be used for the classification later.
+    - kleiner_type: Differentiation for classficiation using kleiner between significant or advanced fibrosis, based on the intervals
+    chosen for factorizing samples.
     - Labels_path: Pathway to the file where data about samples is saved."""
 
+    assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis"], \
+        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner, defining kleiner_type' and 'nas_steatosis'"
+    
     # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
     labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param])
-
+    
     # Due to some data format, we need to get rid of the first 4 and last 18 characters of each File_name for later matching purposes with proper file name
     beginning_file_name = labels_df['File name'].str.find(']') + 2
     for i in range(len(labels_df)):
         labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18] 
- 
-    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in     
+    
+    labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in  
     labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
+   
+    if class_param != 'Group2':
+        labels_df = labels_df[~labels_df[class_param].isnull()] # Get rid of ALD patients with no scores for the chosen parameter
+    
+    # depending on the parameter, we have different binary classifications depending on the scores
+    if class_param == 'Group2':
+        labels_df['class_id'] = labels_df[class_param].factorize()[0]
 
-    labels_df['class_id'] = labels_df[class_param].factorize()[0]
+    elif class_param == 'nas_inflam':
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[0,1])
+
+    elif class_param == 'kleiner':
+        if kleiner_type == 'significant':
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[0,1])
+        elif kleiner_type == 'advanced':
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[0,1])
+    
+    elif class_param == 'nas_steatosis':
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[0,1])
     
     # If we want to save the original class name and know its id
     #category_id_df = df[[class_param, 'class_id']].drop_duplicates()
     #category_to_id = dict(category_id_df.values)
 
     return labels_df
-
 
 # Get datasets:
 

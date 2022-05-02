@@ -67,23 +67,26 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
     # QUESTION: Should the batching be done outside the train loop and use the same batches for all epochs?
 
     for batch in range(num_batches):
-        with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type): # optimize training time with scaler (float32 --> float16)
-            output = model(inputs[batch].to(device), src_mask[batch].to(device))
+        #with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type): # optimize training time with scaler (float32 --> float16)
+        output = model(inputs[batch].to(device), src_mask[batch].to(device))
 
-            loss = 0
-            for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
-                single_output = output[:, data_sample] # predicted output by BERT and decoder
-                single_target = targets[batch][:, data_sample] # expected target for this spectrum
-                labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
+        loss = 0
+        for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
+            single_output = output[:, data_sample] # predicted output by BERT and decoder
+            single_target = targets[batch][:, data_sample] # expected target for this spectrum
+            labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
 
-                # Get just output and target in masked positions, which are the ones that must be used for training our model
-                mask_mapping = map(single_output.__getitem__, labels_output) 
-                batch_output = torch.stack(list(mask_mapping)).to(device)
+            # Try to predefine tensor and allocate later!!
+            # Get just output and target in masked positions, which are the ones that must be used for training our model
+            mask_mapping = map(single_output.__getitem__, labels_output) 
+            batch_output = torch.stack(list(mask_mapping))
+            batch_output = batch_output.to(device)
 
-                target_mapping = map(single_target.__getitem__, labels_output)
-                batch_target = torch.stack(list(target_mapping)).to(device)
+            target_mapping = map(single_target.__getitem__, labels_output)
+            batch_target = torch.stack(list(target_mapping))
+            batch_target = batch_target.to(device)
 
-                loss += criterion(batch_output, batch_target)    
+            loss += criterion(batch_output, batch_target)    
 
         optimizer.zero_grad()
         scaler.scale(loss).backward() if scaler else loss.backward()
@@ -134,23 +137,25 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
     inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
     with torch.no_grad():
         for batch in range(num_batches):
-            with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
-                output = model(inputs[batch].to(device), src_mask[batch].to(device))
-                loss = 0
-                for data_sample in range(batchsize):
-                    single_output = output[:, data_sample]
-                    single_target = targets[batch][:, data_sample]
-                    labels_output = labels[batch][data_sample]
+            #with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
+            output = model(inputs[batch].to(device), src_mask[batch].to(device))
+            loss = 0
+            for data_sample in range(batchsize):
+                single_output = output[:, data_sample]
+                single_target = targets[batch][:, data_sample]
+                labels_output = labels[batch][data_sample]
 
-                    mask_mapping = map(single_output.__getitem__, labels_output)
-                    batch_output = torch.stack(list(mask_mapping)).to(device)
+                mask_mapping = map(single_output.__getitem__, labels_output)
+                batch_output = torch.stack(list(mask_mapping))
+                batch_output = batch_output.to(device)
 
-                    target_mapping = map(single_target.__getitem__, labels_output)
-                    batch_target = torch.stack(list(target_mapping)).to(device)
+                target_mapping = map(single_target.__getitem__, labels_output)
+                batch_target = torch.stack(list(target_mapping))
+                batch_target = batch_target.to(device)
 
-                    loss += criterion(batch_output, batch_target)
-                
-                total_loss += batchsize * loss.item()
+                loss += criterion(batch_output, batch_target)
+            
+            total_loss += batchsize * loss.item()
     
     default_val_loss = total_loss / (batchsize - 1)
     val_loss = total_loss / (batchsize * num_batches)
