@@ -21,10 +21,18 @@ with cProfile.Profile() as pr:
     # Get Data specifying the directory where raw data is or we want to store
     files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_data\\'
     #files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/CLS_desc_rettime_tokens/'
-    train_ds, val_ds = TrainingBERTDataLoader(files_dir, vocab, num_bins, training_percentage=0.5, validation_percentage=0.3, CLS_token=True, add_ret_time=True)
-    #evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
+
+    evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\training_results.txt', "w")
     #evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_cls_ret_halfsize.txt', "w")
-    evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_results.txt', "w")
+
+    train_ds, val_ds = TrainingBERTDataLoader(files_dir, 
+                                            vocab, 
+                                            training_percentage=0.5, 
+                                            validation_percentage=0.3, 
+                                            CLS_token=True, 
+                                            add_ret_time=True,
+                                            data_repetition=1)
+
 
     # Define the model network for training BERT model
 
@@ -44,8 +52,7 @@ with cProfile.Profile() as pr:
 
     criterion = nn.CrossEntropyLoss()
     lr = 1e-4
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, eps=1e-4) 
-    # From https://github.com/ml-jku/DeepRC/blob/master/deeprc/training.py "eps needs to be at about 1e-4 to be numerically stable with 16 bit float"
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, eps=1e-4) # From https://github.com/ml-jku/DeepRC/blob/master/deeprc/training.py "eps needs to be at about 1e-4 to be numerically stable with 16 bit float"
     scheduler = BERT_scheduler(optimizer, learning_rate=lr, perc_warmup_steps=0.01, total_training_steps=n_epochs*num_batches)
     scheduler.step() # Initialize scheduler so lr starts warup from 0 as we want
 
@@ -59,30 +66,38 @@ with cProfile.Profile() as pr:
     best_val_loss = float('inf')
     best_model = None
 
+    early_stopping_counter = 0
+
     for epoch in range(1, n_epochs + 1):
-        print('Epoch number: ', epoch)
+        print('Epoch: ', epoch , '/', n_epochs)
         epoch_start_time = time.time()
 
         train_loss = BERT_train(model, optimizer, criterion, scheduler, dataset=train_ds, results_file=evolution_file, \
             batchsize = batchsize, current_epoch=epoch, total_epochs=n_epochs, limited_seq_len=limited_seq_len, \
             shorter_len_perc=perc_epochs_shorter, log_interval=1000, device=device, scaler=scaler)
+
+        training_error.append(train_loss)
     
         val_loss = BERT_evaluate(model, criterion, dataset=val_ds, results_file=evolution_file, batchsize=batchsize,\
             current_epoch=epoch, total_epochs=n_epochs, limited_seq_len=limited_seq_len, shorter_len_perc=perc_epochs_shorter, \
             start_time=epoch_start_time, device=device)
 
-        training_error.append(train_loss)
+ 
         validation_error.append(val_loss)
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            early_stopping_counter = 0
             #torch.save({'epoch': epoch,
             #            'model_state_dict': model.state_dict(),
             #            'optimizer_state_dict': optimizer.state_dict(),
             #            'loss': train_loss
                         #}, 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\bert_model.pt')
             #            }, '/home/projects/cpr_10006/people/enrcop/models/train/BERT_half_noCLS_norettime.pt')
-
+        else: 
+            early_stopping_counter += 1
+            if early_stopping_counter > 4:
+                exit()
     #save_plot = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\test.png'
     #save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_train/BERT_half_noCLS_norettime.png'
     #save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/dummy_plots/train.png'

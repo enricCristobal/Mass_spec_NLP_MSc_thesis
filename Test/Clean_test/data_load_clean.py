@@ -24,7 +24,6 @@ def unpickle_to_df(pickle_dir, output_dir):
     Parameters:
     - pickle_dir: Directory where the pickle files are found.
     - output_dir: Directory where the csv file will be saved.
-
     Comment: Dummy fucntion just used to ensure a pattern on the data to avoid 
     the 10 first scans before doing the 3 rows jump to remove the "magic" scans."""
 
@@ -70,8 +69,9 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
             x = x.iloc[9::3, [1,5,6]] # we get rid of the "algorithm warmup" and "magic" scans (obtained when visualizing df obtained from unpickle_to_df)
             for i in range(len(x)):
                 mass_spec_scan = x.iloc[i,0] # get scan number (but we lose specific retention time) (column 0 would be ret_time)
-                # but adding retention time would make vocab definition as complex as if we added intensities --> TODO!!: Consider the 2D embedding in continuous space from Henry's poster
+                # but adding retention time would make vocab definition as complex as if we added intensities 
                 mz_array = x.iloc[i,1]
+                #TODO!: Add intensities in the "sentence"? # Tricky to create voabulary of intensities --> # --> Idea: Consider the 2D embedding in continuous space from Henry's poster
                 inten_array = x.iloc[i,2]
 
                 # Initialize token list including the [CLS] token and retention time as well as some special tokens
@@ -102,14 +102,13 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
                     # discretize to tokens (e.g. bin number)
                     mz_token_array = np.digitize(mz_flt_array, bins)
 
-                    # Order bin numbers by desc
+                    # Order bin numbers by descending intensity
                     if descending_order:
                         zipped_arrays = zip(inten_flt_array, mz_token_array)
                         sorted_arrays = sorted(zipped_arrays, reverse = True)  
                         mz_token_array = [element for _,element in sorted_arrays]
                         
                     ##TODO!: Add intensities in the "sentence"? # Tricky to create voabulary of intensities
-
                     tokens_string =  [str(int) for int in mz_token_array]
                     
                 # Collect
@@ -121,7 +120,7 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
                 # Some of the scans will have more than 512 "peaks"/bins, while others will have less --> padding is needed later
                 
                 # Add [EOS] token to allow model differentiate between [SEP] for ret_time and end of scan
-                ret_time_spec.extend(['[EOS]']) # TODO!!: Really relevant to add [EOS] token if not used during training?
+                ret_time_spec.extend(['[EOS]'])
             
                 # Save to raw data text file
                 out_string = ' '.join(ret_time_spec)
@@ -136,7 +135,6 @@ def unpickle_to_raw(input_dir, output_dir, num_bins, peak_filter:float = 0.1, \
 
 def divide_train_val_samples(files_dir, train_perc, val_perc):
     """Divide samples into train and validation samples by specifying the percentage for each.
-
     Parameters: 
     - Files_dir: Directory where raw data files are found.
     - Train_perc: Percentage of samples in specified directory that will be used for training.
@@ -155,12 +153,11 @@ def divide_train_val_samples(files_dir, train_perc, val_perc):
 
 ## TRAINING PART
 
-def create_training_dataset(sample, vocab, samples_dir, num_bins, \
+def create_training_dataset(sample, vocab, samples_dir, \
      CLS_token: bool, add_ret_time: bool, input_size: int = 512, data_repetition: int = 1):
     """Function to process the raw data from text files with peak numbers to the tensors that 
     will be passed as input, target, mask and labels, as part of the DataLoaders.
     This includes padding and masking.
-
     Parameters:
     - sample: Which sample --> file will be processed.
     - vocab: The specific vocabulary of our model. Default: will be defined
@@ -211,7 +208,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
 
     # helper function to generate masked input
     def mask_input(input, CLS_token, add_ret_time):
-        j = 3 if CLS_token else 2 if add_ret_time else 0 # not masking [CLS] token if present
+        j = 3 if CLS_token and add_ret_time else 2 if add_ret_time else 1 if CLS_token else 0 # not masking [CLS] token if present
         masked_indices = []
         for i in range(len(input) - j): # To not mask the ret_time nor the [SEP] tokens
             #if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
@@ -222,7 +219,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
                         input[i+j] = '[MASK]' 
                         masked_indices.append(i+j) # save masked positions that will be used later when training the model
                     elif 0.8 <= second_random < 0.9: # of the 15%, 10% is changed for a random value of the vocab
-                        input[i+j] =  str(random.randint(0,(num_bins - 1)))  
+                        input[i+j] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
                         masked_indices.append(i+j) 
                     else:
                         masked_indices.append(i+j) # last 10% of the 15% is left unchanged        
@@ -242,7 +239,7 @@ def create_training_dataset(sample, vocab, samples_dir, num_bins, \
     return input_tensor_list, target_tensor_list, attention_mask_tensor, mask_indices
 
 
-def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage: float, validation_percentage: float, CLS_token: bool,\
+def TrainingBERTDataLoader(files_dir, vocab, training_percentage: float, validation_percentage: float, CLS_token: bool,\
      add_ret_time: bool, data_repetition: int = 1):
     "Simplify 'DataLoader' creation for training BERT in one function"
 
@@ -251,11 +248,11 @@ def TrainingBERTDataLoader(files_dir, vocab, num_bins: int, training_percentage:
 
     # Create dataloaders considering the presence or not presence of CLS tokens for the masking, as well as the limited seq_length for 90% of training as mentioned in BERT paper
     # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model)
-    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token,\
+    train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, CLS_token=CLS_token,\
          add_ret_time=add_ret_time, data_repetition=data_repetition) for f in train_samples]
     
     # Create validation dataloader
-    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, num_bins=num_bins, CLS_token=CLS_token, \
+    val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, CLS_token=CLS_token, \
         add_ret_time=add_ret_time, data_repetition=data_repetition) for f in val_samples]
 
     return train_ds, val_ds
@@ -269,7 +266,6 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
     """Function that will return a dataframe containing the samples with their file name as first column,
     The second column will be the class_param that we are considering for the classification (Group 2 by default --> Healthy vs ALD),
     and the last one is the factorization of the strings for class_param to numbers.
-
     Parameters:
     - Fine_tune_files: Files/Samples taht will be used for the fine-tuning.
     - Class_param: Parameter that will be used for the classification later.
@@ -321,7 +317,6 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
 
 def get_labels(df, samples_list):
     """Function to get the label for each sample that is part of a list of interest with file names within the labels_df.
-
     Parameters:
     - df: Dataframe where labels for each file/sample is found.
     - samples_list: List of samples to consider."""
@@ -342,7 +337,6 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int
     """Function to process the raw data from text files with peak numbers to the tensors that 
     will be passed as input and target, as part of the DataLoaders.
     This is for the classification task.
-
     Parameters:
     - sample: Which sample --> file will be processed.
     - vocab: The specific vocabulary of our model. Default: will be defined
@@ -408,5 +402,3 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
     val_finetune_ds = [create_finetuning_dataset(f, vocab, files_dir, val_labels[i]) for i,f in enumerate(val_finetune_samples)]
 
     return train_finetune_ds, val_finetune_ds, num_labels
-
-            

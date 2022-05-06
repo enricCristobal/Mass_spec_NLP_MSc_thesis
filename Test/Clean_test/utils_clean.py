@@ -37,7 +37,6 @@ flatten_sample = lambda sample,dimension:[spectra for spectra in sample[dimensio
 def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: int, \
     limited_seq_len: int, shorter_len_perc: int, log_interval: int, device, scaler = None):
     """Training function for the training of BERT.
-
     Parameters:
     - model: nn.Module used to define the BERT model we want to train.
     - optimizer: optimizer used for training the model. Default: AdamW.
@@ -91,7 +90,7 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
         optimizer.zero_grad()
         scaler.scale(loss).backward() if scaler else loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-        scaler.scale(optimizer) if scaler else optimizer.step()
+        scaler.step(optimizer) if scaler else optimizer.step()
         scaler.update() if scaler else None
         total_loss += loss.item()
 
@@ -114,7 +113,6 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
 def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: float, \
     limited_seq_len: int, shorter_len_perc: int, start_time, device) -> float:
     """Evalutation function for the training of BERT.
-
     Parameters:
     - model: nn.Module used to define the BERT model we want to train.
     - criterion: Criterion used for the backpropagation. Default: CrossEntropy.
@@ -172,7 +170,6 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
 def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorter_len_perc):
     """Create function to divide input, target, att_mask and labels in batches
      Transpose by .t() method because we want the size [seq_len, batch_size]
-
     This function returns a list with len num_batches = len(input_data) // batchsize
     where each element of this list contains a tensor of size [seq_len, batch_size] or transposed
     Thus, looping through the whole list with len num_batches, we are going through 
@@ -184,8 +181,6 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
     labels = flatten_list(data_ds, 3)
     
     num_batches = len(input_data) // batchsize
-    last_batch = len(input_data) % batchsize
-    num_batches_final = num_batches + 1 if last_batch else num_batches
 
     input_batch = []; target_batch = []; att_mask_batch = []; labels_batch = []
     indices = list(range(len(input_data)))
@@ -193,7 +188,7 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
     for shuffling_times in range(10):
         random.shuffle(indices)
 
-    for batch in range(num_batches_final):
+    for batch in range(num_batches):
         batch_indices = []
 
         if batch < num_batches:
@@ -259,7 +254,6 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         for sample in best_att_weights_matrix:
             if len(sample) < max_size:
                 sample.append([0]*(max_size - len(sample)))
-
         plt.matshow(best_att_weights_matrix)
         plt.xlabel('Scans / Spectra')
         plt.ylabel('Samples / Patients')
@@ -269,7 +263,6 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         '''
         # If at some point we wanna take the x% most informative spectra
         _, used_spectra = torch.topk(att_weights, num_class_spectra)
-
         used_output = output[used_spectra].to(device)
         used_labels = class_labels[used_spectra].to(device)
         '''
@@ -277,7 +270,7 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         optimizer.zero_grad()
         scaler.scale(loss).backward() if scaler else loss.backward()
         torch.nn.utils.clip_grad_norm_(finetune_model.parameters(), 0.5)
-        scaler.scale(optimizer) if scaler else optimizer.step()
+        scaler.step(optimizer) if scaler else optimizer.step()
         scaler.update() if scaler else None
         total_loss += loss.item()
 
@@ -332,9 +325,6 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
     labels_data = flatten(sample_data_ds, 1)
     
     num_batches = len(input_data) // batchsize
-    last_batch = len(input_data) % batchsize
-
-    num_batches_final = num_batches + 1 if last_batch else num_batches
     
     # We do same process of randomising a bit, so we don't follow the retention times of the experiment in order
     input_batch = []; labels_batch = []; 
@@ -344,7 +334,7 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
         for shuffling_times in range(10):
             random.shuffle(indices)
 
-    for batch in range(num_batches_final):
+    for batch in range(num_batches):
         batch_indices = []
         if batch < num_batches:
             for _ in range(batchsize):
@@ -436,8 +426,3 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     plt.savefig(pathway)
     #plt.savefig(os.getcwd() + '/Embedding.png')
     #plt.show()
-      
-
-
-
-        
