@@ -77,13 +77,16 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
 
                 # Try to predefine tensor and allocate later!!
                 # Get just output and target in masked positions, which are the ones that must be used for training our model
-                mask_mapping = map(single_output.__getitem__, labels_output) 
-                batch_output = torch.stack(list(mask_mapping))
-                batch_output = batch_output.to(device)
+                #mask_mapping = map(single_output.__getitem__, labels_output) 
+                #batch_output = torch.stack(list(mask_mapping))
+                #batch_output = batch_output.to(device)
+                # Applying all in one line, otherwise there are some issues with calling torh.stack to the list and it said it was an empty tensor list
+                batch_output = torch.stack(list(map(single_output.__getitem__, labels_output))).to(device)
 
-                target_mapping = map(single_target.__getitem__, labels_output)
-                batch_target = torch.stack(list(target_mapping))
-                batch_target = batch_target.to(device)
+                #target_mapping = map(single_target.__getitem__, labels_output)
+                #batch_target = torch.stack(list(target_mapping))
+                #batch_target = batch_target.to(device)
+                batch_target = torch.stack(list(map(single_target.__getitem__, labels_output))).to(device)
 
                 loss += criterion(batch_output, batch_target)    
 
@@ -143,13 +146,15 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
                     single_target = targets[batch][:, data_sample]
                     labels_output = labels[batch][data_sample]
 
-                    mask_mapping = map(single_output.__getitem__, labels_output)
-                    batch_output = torch.stack(list(mask_mapping))
-                    batch_output = batch_output.to(device)
+                    #mask_mapping = map(single_output.__getitem__, labels_output)
+                    #batch_output = torch.stack(list(mask_mapping))
+                    #batch_output = batch_output.to(device)
+                    batch_output = torch.stack(list(map(single_output.__getitem__, labels_output))).to(device)
 
-                    target_mapping = map(single_target.__getitem__, labels_output)
-                    batch_target = torch.stack(list(target_mapping))
-                    batch_target = batch_target.to(device)
+                    #target_mapping = map(single_target.__getitem__, labels_output)
+                    #batch_target = torch.stack(list(target_mapping))
+                    #batch_target = batch_target.to(device)
+                    batch_target = torch.stack(list(map(single_target.__getitem__, labels_output))).to(device)
 
                     loss += criterion(batch_output, batch_target)
             
