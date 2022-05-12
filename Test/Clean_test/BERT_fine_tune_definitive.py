@@ -50,7 +50,7 @@ BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
 attention_network = AttentionNetwork(n_input_features = 192, n_layers = 2, n_units = 32)
 classification_layer = ClassificationLayer(d_model = 192, num_labels = num_labels)
 
-model = FineTune_classification(attention_network, classification_layer).to(device)
+model = FineTune_classification(attention_network, classification_layer)#.to(device)
 
 batchsize = 16
 criterion = nn.CrossEntropyLoss()
