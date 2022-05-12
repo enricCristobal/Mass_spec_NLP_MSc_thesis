@@ -189,52 +189,76 @@ def create_training_dataset(sample, vocab, samples_dir, \
                 token_list = tokenizer(line.rstrip())
                 tokens_pad, mask = pad_tokens(token_list)
                 yield tokens_pad, tokens_pad, mask
+    if sample != '20190525_QE10_Evosep1_P0000005_LiNi_SA_Plate3_A7.raw.pkl':
+        # Generate tokens and pad if needed
+        input_iter = []; target_iter = []; att_mask_iter = []
+        for _ in range(data_repetition): # we go through our data samples more than once, by masking in different places to give more data to the model
+            for input_yield, target_yield, att_mask_yield in yield_tokens(sample):
+                input_iter.append([input_yield])
+                target_iter.append([target_yield])
+                att_mask_iter.append([att_mask_yield])
+        
+        input = [item for sublist in input_iter for item in sublist]    
+        target = [vocab(item) for sublist in target_iter for item in sublist]
+        attention_mask = [item for sublist in att_mask_iter for item in sublist]
 
-    # Generate tokens and pad if needed
-    input_iter = []; target_iter = []; att_mask_iter = []
-    for _ in range(data_repetition): # we go through our data samples more than once, by masking in different places to give more data to the model
-        for input_yield, target_yield, att_mask_yield in yield_tokens(sample):
-            input_iter.append([input_yield])
-            target_iter.append([target_yield])
-            att_mask_iter.append([att_mask_yield])
-    
-    input = [item for sublist in input_iter for item in sublist]    
-    target = [vocab(item) for sublist in target_iter for item in sublist]
-    attention_mask = [item for sublist in att_mask_iter for item in sublist]
+        # convert to list of tensors    
+        target_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in target]
+        attention_mask_tensor = [torch.tensor(L, dtype=torch.bool) for L in attention_mask]
 
-    # convert to list of tensors    
-    target_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in target]
-    attention_mask_tensor = [torch.tensor(L, dtype=torch.bool) for L in attention_mask]
+        # helper function to generate masked input
+        def mask_input(input, CLS_token, add_ret_time):
+            j = 3 if CLS_token and add_ret_time else 2 if add_ret_time else 1 if CLS_token else 0 # not masking [CLS] token if present
+            masked_indices = []
+            if '[PAD]' in input:
+                final_masking = input.index['PAD']
+            else: 
+                final_masking = len(input) - 1 
+            
+            potential_masking_input = input[j:final_masking]
+            all_labels = random.sample(list(enumerate(potential_masking_input)), round(0.15*len(potential_masking_input)))
+            # all_labels = [(index1, value1), (index2, value2), ...]
+            for component, _ in all_labels:
+                random_value = random.random()
+                if random_value < 0.8: # of the 15%, 80% will be changed to [MASK] token
+                    input[component] = '[MASK]' 
+                    masked_indices.append(component) # save masked positions that will be used later when training the model
+                elif 0.8 <= random_value < 0.9: # of the 15%, 10% is changed for a random value of the vocab
+                    input[component] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
+                    masked_indices.append(component) 
+                else:
+                    masked_indices.append(component) # last 10% of the 15% is left unchanged 
+            #for i in range(len(input) - j): # To not mask the ret_time nor the [SEP] tokens
 
-    # helper function to generate masked input
-    def mask_input(input, CLS_token, add_ret_time):
-        j = 3 if CLS_token and add_ret_time else 2 if add_ret_time else 1 if CLS_token else 0 # not masking [CLS] token if present
-        masked_indices = []
-        for i in range(len(input) - j): # To not mask the ret_time nor the [SEP] tokens
-            #if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
-            if random.random() < 0.15: # 15% tokens will be masked
-                if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
-                    second_random = random.random()
-                    if second_random < 0.8: # of the 15%, 80% will be changed to [MASK] token
-                        input[i+j] = '[MASK]' 
-                        masked_indices.append(i+j) # save masked positions that will be used later when training the model
-                    elif 0.8 <= second_random < 0.9: # of the 15%, 10% is changed for a random value of the vocab
-                        input[i+j] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
-                        masked_indices.append(i+j) 
-                    else:
-                        masked_indices.append(i+j) # last 10% of the 15% is left unchanged        
-        yield input, masked_indices
+                '''
+                #if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
+                if random.random() < 0.15: # 15% tokens will be masked
+                    if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
+                        second_random = random.random()
+                        if second_random < 0.8: # of the 15%, 80% will be changed to [MASK] token
+                            input[i+j] = '[MASK]' 
+                            masked_indices.append(i+j) # save masked positions that will be used later when training the model
+                        elif 0.8 <= second_random < 0.9: # of the 15%, 10% is changed for a random value of the vocab
+                            input[i+j] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
+                            masked_indices.append(i+j) 
+                        else:
+                            masked_indices.append(i+j) # last 10% of the 15% is left unchanged   
+                '''     
+            yield input, masked_indices
 
-    final_input = []; mask_indices = []
-    for input_line in input:
-        for input, masked_indices in mask_input(input_line, CLS_token, add_ret_time):
-            final_input.append([input])
-            mask_indices.append(masked_indices)
-    
-    input = [vocab(item) for sublist in final_input for item in sublist]
-    
-    # convert to list of tensors
-    input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input]
+        final_input = []; mask_indices = []
+        for input_line in input:
+            for input, masked_indices in mask_input(input_line, CLS_token, add_ret_time):
+                final_input.append([input])
+                mask_indices.append(masked_indices)
+                #if len(masked_indices) == 0:
+                #    print('Labels empty')
+                #    print(sample)  
+        
+        input = [vocab(item) for sublist in final_input for item in sublist]
+        
+        # convert to list of tensors
+        input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input]
     
     return input_tensor_list, target_tensor_list, attention_mask_tensor, mask_indices
 
@@ -278,7 +302,7 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
     
     # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
-    labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param])
+    labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param]) 
     
     # Due to some data format, we need to get rid of the first 4 and last 18 characters of each File_name for later matching purposes with proper file name
     beginning_file_name = labels_df['File name'].str.find(']') + 2
@@ -379,14 +403,14 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int
 
 
 def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, class_param: str = 'Group2', \
-    labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
+    kleiner_type: str = None, labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
     "Simplify 'DataLoader' creation for fine-tuning BERT in one function."
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples
+
+    labels_df = fine_tune_ds(finetune_samples, class_param, kleiner_type, labels_path)
     
-    labels_df = fine_tune_ds(finetune_samples, class_param, labels_path)
-  
     # TODO!!: Issues regarding imbalanced dataset!!! Could be fixed using weight in cross entropy loss
 
     #print(len(labels_df.index[labels_df['class_id'] == 0]))

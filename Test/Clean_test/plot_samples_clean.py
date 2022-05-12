@@ -18,10 +18,14 @@ vocab = get_vocab(num_bins=50000)
 data_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\' 
 labels_dir = data_dir + 'ALD_histological_scores.csv'
 
-# Get the samples used for the ploting
-samples, _ = divide_train_val_samples(data_dir, 0.9, 0) # !!LOCAL THING: 0.9 to avoid histological scores csv file
+embedding_analysis_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\embedding_analysis_data\\'
 
-dataset, _, _ = FineTuneBERTDataLoader(data_dir, vocab, training_percentage=0.9, validation_percentage=0,\
+# Get the samples used for the ploting
+samples, _ = divide_train_val_samples(embedding_analysis_dir, 1, 0) 
+# !!LOCAL THING: when plotting applying the mean to all the scans per one sample, 0.9 to avoid histological scores csv file whn using test_data dir
+# when not applying any aggregation and obtaining all scans per sample, use 1 and place just one file in embedding_analysis_dir
+print(samples)
+dataset, _, _ = FineTuneBERTDataLoader(embedding_analysis_dir, vocab, training_percentage=1, validation_percentage=0,\
     class_param=sys.argv[1], kleiner_type = sys.argv[2], labels_path=labels_dir)
 
 # Define the model network for BERT model and load trained weights
@@ -58,9 +62,10 @@ plot_embeddings(model=BERT_model,
                 samples_names=samples,
                 dataset=dataset,
                 batchsize = 32,
-                aggregation_layer='sample', # For now just 'sample' and 'ret_time'
+                aggregation_layer=None, # For now just 'sample' and 'ret_time'
                 labels = [sys.argv[3], sys.argv[4]], #['Healthy', 'ALD'],
-                pathway='C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\' + sys.argv[5], #Dummy_results\\Embedding2.png',
+                pathway='C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Computerome_results\\BERT_vanilla_embeddings\\Individual_analysis\\',
                 #pathway = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_finetune/BERT_vanilla/' + sys.argv[5],  #Group2_HPvsALD/Embedding1.0.png',
+                patient_type= 'HP_2',
                 device = device)
 

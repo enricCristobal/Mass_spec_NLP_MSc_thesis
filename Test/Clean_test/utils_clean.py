@@ -13,6 +13,7 @@ from statistics import mean
 import numpy as np
 import umap.umap_ as umap
 import matplotlib.pyplot as plt
+import scipy.stats as stats
 
 # VOCABULARY DEFINITION
 def get_vocab(num_bins):
@@ -244,13 +245,14 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
 
         inside_train_error = []; hidden_vectors_sample = []
         with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
-            for batch in range(len(inputs)):  
-                hidden_vectors_batch = BERT_model(inputs[batch].to(device))
-                hidden_vectors_sample.append(hidden_vectors_batch)
-            #print('BERT output size: ', hidden_vectors_sample[0].size())
-            #print('Attention layer input size: ', torch.cat(hidden_vectors_sample).size())
-            att_weights, output = finetune_model(torch.cat(hidden_vectors_sample).to(device))
-            #print('Final output size: ', output.size())
+            with torch.no_grad():
+                for batch in range(len(inputs)):  
+                    hidden_vectors_batch = BERT_model(inputs[batch].to(device))
+                    hidden_vectors_batch_cpu = hidden_vectors_batch.cpu()
+                    del hidden_vectors_batch
+                    hidden_vectors_sample.append(hidden_vectors_batch_cpu)
+            att_weights, output = finetune_model(torch.cat(hidden_vectors_sample))
+                #print('Final output size: ', output.size())
             att_weights_matrix.append(att_weights)
         '''
         max_size = max([len(sample) for sample in att_weights_matrix])
@@ -273,7 +275,7 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         '''
         loss = criterion(torch.squeeze(output), torch.cat(class_labels))
         optimizer.zero_grad()
-        scaler.scale(loss).backward() if scaler else loss.backward()
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(finetune_model.parameters(), 0.5)
         scaler.step(optimizer) if scaler else optimizer.step()
         scaler.update() if scaler else None
@@ -304,12 +306,13 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
     # For validation, we don't just pass one sample at a time, but randomize
     inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
     
-    with torch.no_grad():
-        for batch in range(len(inputs)): # len(inputs) == num_batches
-            hidden_vectors = BERT_model(inputs[batch].to(device))
-            _, output = finetune_model(hidden_vectors.to(device))
-            loss = criterion(output, class_labels[batch].to(device))
-            total_loss += loss.item()
+    with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
+        with torch.no_grad():
+            for batch in range(len(inputs)): # len(inputs) == num_batches
+                hidden_vectors = BERT_model(inputs[batch].to(device))
+                _, output = finetune_model(hidden_vectors.to(device))
+                loss = criterion(output, class_labels[batch].to(device))
+                total_loss += loss.item()
         
     val_loss = total_loss / len(inputs)
     elapsed = time.time() - start_time
@@ -392,15 +395,29 @@ def plot_att_weights(att_weights_matrix, pathway):
     plt.savefig(pathway)
 
 
-def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
-             batchsize: int, aggregation_layer: string, labels, pathway: str, device: torch.device):
+def plot_individual_axis_distribution(embedding, patient_type: str, axis: str):
+    
+    dim = 0 if axis == 'X' else 1
+    mean = np.mean(embedding[:,dim])
+    sd = np.std(embedding[:,dim])
+    x = np.linspace(mean - 3*sd, mean + 3*sd, 100)
+    plt.hist(embedding[:,dim], bins = 50, density = True)
+    #plt.plot(x, stats.norm.pdf(x, mean, sd), linewidth=3)
+    #plt.axvline(mean, color='red', linewidth = 1)
+    plt.title('%s-%s axis embedding distribution (mean=%2.2f, std≈%2.2f)' %(patient_type, axis, mean, sd))
+    plt.xlabel('%s-axis embedding' %(axis))
+    plt.savefig('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Computerome_results\\BERT_vanilla_embeddings\\Individual_analysis\\%s_%s_distribution.png' %(patient_type, axis))
 
-    assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
+
+def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
+             batchsize: int, aggregation_layer: string, labels, pathway: str, patient_type: str, device: torch.device):
+
+    #assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
 
     model.eval()
     reducer = umap.UMAP(n_neighbors=15)
     dataframe = []
-
+    
     for sample in range(len(dataset)):
         #print('Sample number: ', sample + 1)
         inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample=True)
@@ -409,25 +426,38 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
         for batch in range(len(inputs)):
             hidden_vectors_batch = model(inputs[batch].to(device)) # torch.Tensor of size [batchsize x embed_size]
             hidden_vectors_sample.append(hidden_vectors_batch.tolist()) 
-
+        
         hidden_vectors = [scan for batched_scans in hidden_vectors_sample for scan in batched_scans] # after appending all batches --> list of size [# scans/sample x embed_size]
 
-        # As preparation for the content "skeleton" of the database, name of sample for each of its scans, the number of scan ("ret_time"), and the label for each scan of the sample again (class_labels[0][0], because all will have the same for each sample)
+        # As preparation for the content "skeleton" of the dataframe, name of sample for each of its scans, the number of scan ("ret_time"), and the label for each scan of the sample again (class_labels[0][0], because all will have the same for each sample)
         samples_and_time = list(map(list,zip([samples_names[sample]]*len(dataset[sample][0]), range(len(dataset[sample][0])), [class_labels[0][0].tolist()]*len(dataset[sample][0]))))
         dataframe.append(list(map(list.__add__, samples_and_time, hidden_vectors))) # include embedding values for each scan of current sample
         
     flat_dataframe = [sample_scan for sample_dataframe in dataframe for sample_scan in sample_dataframe]
     df = pd.DataFrame(flat_dataframe, columns = ['Sample_name', 'Scan_order', 'Label'] + list(range(hidden_vectors_batch.size()[1]))) # creation of df colums with embed_size
+    
     # Size df is [# total scans over all samples x (3 + embed_size)]
     if aggregation_layer == "sample":
         df = df.groupby('Sample_name').mean() # apply mean over each components for all embeddings part of the same sample
-        # df size now is [#samples x (3 + embed_size)]
-    ## !! QUESTION: Is this the proper way to approach it? Felix got good clustering applying mean, but mathematical meaning?
-    embedding = reducer.fit_transform(df)
+        # df size now is [#samples x (2 + embed_size)] (Sample_name has become the row name --> doesn't count as column)
+        embedding = reducer.fit_transform(df.iloc[:,2:])
+        scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
+        plt.legend(handles=scatter.legend_elements()[0], labels = labels, title="Patients status")
+        plt.title('UMAP projection of the embedding space by patients', fontsize=14)
+        plt.savefig(pathway)
+        #plt.show()
+        ## !! QUESTION: Is this the proper way to approach it? Felix got good clustering applying mean, but mathematical meaning?
 
-    scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
-    plt.legend(handles=scatter.legend_elements()[0], labels = labels, title="Patients status")
-    plt.title('UMAP projection of the embedding space by patients', fontsize=14)
-    plt.savefig(pathway)
-    #plt.savefig(os.getcwd() + '/Embedding.png')
-    #plt.show()
+    else:
+        embedding = reducer.fit_transform(df.iloc[:,3:]) # Remove the sample_name, scan_order, and label of the fitting
+        plot_individual_axis_distribution(embedding, patient_type, axis='X')
+        plt.clf()
+        plot_individual_axis_distribution(embedding, patient_type, axis='Y')
+        plt.clf()
+
+        for scan in range(len(embedding)):
+            plt.plot(embedding[scan, 0], embedding[scan, 1], marker="o", markersize=5, markeredgecolor="green", markerfacecolor="green", alpha=1/len(embedding)*(scan+1))
+        plt.title('Projection of embedding space by scans for %s patient' %(patient_type), fontsize=14)
+        plt.xlabel('Projected embedding dim 1', fontsize=8)
+        plt.ylabel('Projected embedding dim 2', fontsize=8)
+        plt.savefig(pathway + '%s_patient_time_embedding.png' %(patient_type))
