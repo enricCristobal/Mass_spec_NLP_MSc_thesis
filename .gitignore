@@ -5,3 +5,5 @@ models/*
 Dummy_results/*
 Test/dummy_data/*
 Computerome_results/*
+Test/embed_analysis_reservoir/*
+Test/embedding_analysis_data/*
