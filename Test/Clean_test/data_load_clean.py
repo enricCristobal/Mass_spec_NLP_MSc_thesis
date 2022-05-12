@@ -5,6 +5,7 @@ import os
 import numpy as np
 import random
 import pandas as pd
+from math import ceil, floor
 
 import torch
 from torchtext.data.utils import get_tokenizer
@@ -209,41 +210,45 @@ def create_training_dataset(sample, vocab, samples_dir, \
         # helper function to generate masked input
         def mask_input(input, CLS_token, add_ret_time):
             j = 3 if CLS_token and add_ret_time else 2 if add_ret_time else 1 if CLS_token else 0 # not masking [CLS] token if present
+        
             masked_indices = []
             if '[PAD]' in input:
-                final_masking = input.index['PAD']
+                final_masking = input.index('[PAD]')
             else: 
                 final_masking = len(input) - 1 
             
-            potential_masking_input = input[j:final_masking]
-            all_labels = random.sample(list(enumerate(potential_masking_input)), round(0.15*len(potential_masking_input)))
+            potential_masking_input = input[j:final_masking-1] # to avoid special tokens
+            
+            all_labels = random.sample(list(enumerate(potential_masking_input)), round(0.15*len(potential_masking_input))) # get 15% tokens to be masked
+            for component, _ in all_labels:
+                masked_indices.append(j + component)  # save masked positions that will be used later when training the model
+            
+            mask_labels = [all_labels.pop(random.randrange(len(all_labels))) for _ in range(round(0.8*len(all_labels)))] # of the 15%, 80% will be changed to [MASK] token
+            operation = random.choice((ceil,floor)) # we include this to not affect for odd values by doing either round or floor so it is a fair 50-50% for the remaining 20% of labels
+            change_labels = [all_labels.pop(random.randrange(len(all_labels))) for _ in range(operation(0.5*len(all_labels)))]  # of the 15%, 10% is changed for a random value of the vocab
+            same_labels = all_labels # missing 10% of labels are for tokens kept the same
+            
             # all_labels = [(index1, value1), (index2, value2), ...]
+            # change input accordingly
+            for component, _ in mask_labels: 
+                input[j + component] = '[MASK]'  
+
+            for component, _ in change_labels:
+                input[j + component] = str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
+           
+            # last 10% of the 15% is left unchanged    
+            '''
             for component, _ in all_labels:
                 random_value = random.random()
-                if random_value < 0.8: # of the 15%, 80% will be changed to [MASK] token
-                    input[component] = '[MASK]' 
-                    masked_indices.append(component) # save masked positions that will be used later when training the model
-                elif 0.8 <= random_value < 0.9: # of the 15%, 10% is changed for a random value of the vocab
-                    input[component] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
-                    masked_indices.append(component) 
+                if random_value < 0.8:
+                    input[j + component] = '[MASK]' 
+                    masked_indices.append(j + component) 
+                elif 0.8 <= random_value < 0.9: 
+                    input[j+component] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
+                    masked_indices.append(j+component) 
                 else:
-                    masked_indices.append(component) # last 10% of the 15% is left unchanged 
-            #for i in range(len(input) - j): # To not mask the ret_time nor the [SEP] tokens
-
-                '''
-                #if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
-                if random.random() < 0.15: # 15% tokens will be masked
-                    if input[i+j] != '[PAD]' and input[i+j] != '[EOS]':
-                        second_random = random.random()
-                        if second_random < 0.8: # of the 15%, 80% will be changed to [MASK] token
-                            input[i+j] = '[MASK]' 
-                            masked_indices.append(i+j) # save masked positions that will be used later when training the model
-                        elif 0.8 <= second_random < 0.9: # of the 15%, 10% is changed for a random value of the vocab
-                            input[i+j] =  str(random.randint(0,len(vocab) - 6))  # 6 becuase we have 5 special tokens
-                            masked_indices.append(i+j) 
-                        else:
-                            masked_indices.append(i+j) # last 10% of the 15% is left unchanged   
-                '''     
+                    masked_indices.append(j+component)  
+            '''            
             yield input, masked_indices
 
         final_input = []; mask_indices = []
@@ -256,10 +261,9 @@ def create_training_dataset(sample, vocab, samples_dir, \
                 #    print(sample)  
         
         input = [vocab(item) for sublist in final_input for item in sublist]
-        
         # convert to list of tensors
         input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input]
-    
+        
     return input_tensor_list, target_tensor_list, attention_mask_tensor, mask_indices
 
 
