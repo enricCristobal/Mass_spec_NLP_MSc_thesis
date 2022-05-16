@@ -106,6 +106,7 @@ class BERT_scheduler:
         for p in self.optimizer.param_groups:
             p['lr'] = self.learning_rate * rate
         self._rate = rate
+        #print('Learning rate: ', self.learning_rate * rate)
         self.optimizer.step()
 
     def get_lr(self):
@@ -172,7 +173,7 @@ class AttentionNetwork(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim] (After applying torch.cat to all the embeddings of all scans per sample)
                 Comment: Remember we will aplly mean over all the embeddings of all tokens per scan in the sample.
         Returns:
-            attention_weights: Tensor of shape [#scans per sample, 1]
+            attention_weights: Tensor of shape [#sacns per sample, 1]
         """
         attention_weights = self.attention_nn(src)
         return attention_weights
@@ -197,7 +198,7 @@ class ClassificationLayer(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim]
 
         Returns:
-            output: Tensor of shape [#scans per sample, num_labels]
+            output: Tensor of shape [#sacns per sample, num_labels]
         """
         output = self.classification_layer(src)
         return output
@@ -218,7 +219,7 @@ class FineTune_classification(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim]
 
         Returns:
-            output: Tensor of shape [#scans per sample, num_labels]
+            output: Tensor of shape [#sacns per sample, num_labels]
         """
         att_weights = self.attention_nn(src)
         #print('Att layer output size: ', att_weights.size())

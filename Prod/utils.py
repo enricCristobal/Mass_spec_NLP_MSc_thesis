@@ -67,26 +67,22 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
     # QUESTION: Should the batching be done outside the train loop and use the same batches for all epochs?
 
     for batch in range(num_batches):
-        with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type): # optimize training time with scaler (float32 --> float16)
-            output = model(inputs[batch].to(device), src_mask[batch].to(device))
+       # with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type): # optimize training time with scaler (float32 --> float16)
+        output = model(inputs[batch].to(device), src_mask[batch].to(device))
+        loss = 0
+        for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
+            single_output = output[:, data_sample] # predicted output by BERT and decoder
+            single_target = targets[batch][:, data_sample] # expected target for this spectrum
+            labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
 
-            loss = 0
-            for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions --> !!PROBLEM: Although we define a batchsize, we end up calculating the loss 1 by 1
-                single_output = output[:, data_sample] # predicted output by BERT and decoder
-                single_target = targets[batch][:, data_sample] # expected target for this spectrum
-                labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
-
-                # Try to predefine tensor and allocate later!!
                 # Get just output and target in masked positions, which are the ones that must be used for training our model
-                mask_mapping = map(single_output.__getitem__, labels_output) 
-                batch_output = torch.stack(list(mask_mapping))
-                batch_output = batch_output.to(device)
+            mask_mapping = map(single_output.__getitem__, labels_output) 
+            batch_output = torch.stack(list(mask_mapping)).to(device)
 
-                target_mapping = map(single_target.__getitem__, labels_output)
-                batch_target = torch.stack(list(target_mapping))
-                batch_target = batch_target.to(device)
+            target_mapping = map(single_target.__getitem__, labels_output)
+            batch_target = torch.stack(list(target_mapping)).to(device)
 
-                loss += criterion(batch_output, batch_target)    
+            loss += criterion(batch_output, batch_target)    
 
         optimizer.zero_grad()
         scaler.scale(loss).backward() if scaler else loss.backward()
@@ -137,25 +133,23 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
     inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
     with torch.no_grad():
         for batch in range(num_batches):
-            with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
-                output = model(inputs[batch].to(device), src_mask[batch].to(device))
-                loss = 0
-                for data_sample in range(batchsize):
-                    single_output = output[:, data_sample]
-                    single_target = targets[batch][:, data_sample]
-                    labels_output = labels[batch][data_sample]
+            #with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
+            output = model(inputs[batch].to(device), src_mask[batch].to(device))
+            loss = 0
+            for data_sample in range(batchsize):
+                single_output = output[:, data_sample]
+                single_target = targets[batch][:, data_sample]
+                labels_output = labels[batch][data_sample]
 
-                    mask_mapping = map(single_output.__getitem__, labels_output)
-                    batch_output = torch.stack(list(mask_mapping))
-                    batch_output = batch_output.to(device)
+                mask_mapping = map(single_output.__getitem__, labels_output)
+                batch_output = torch.stack(list(mask_mapping)).to(device)
 
-                    target_mapping = map(single_target.__getitem__, labels_output)
-                    batch_target = torch.stack(list(target_mapping))
-                    batch_target = batch_target.to(device)
+                target_mapping = map(single_target.__getitem__, labels_output)
+                batch_target = torch.stack(list(target_mapping)).to(device)
 
-                    loss += criterion(batch_output, batch_target)
-            
-            total_loss += batchsize * loss.item()
+                loss += criterion(batch_output, batch_target)
+                
+                total_loss += batchsize * loss.item()
     
     default_val_loss = total_loss / (batchsize - 1)
     val_loss = total_loss / (batchsize * num_batches)
@@ -184,23 +178,17 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
     labels = flatten_list(data_ds, 3)
     
     num_batches = len(input_data) // batchsize
-    last_batch = len(input_data) % batchsize
-    num_batches_final = num_batches + 1 if last_batch else num_batches
-
     input_batch = []; target_batch = []; att_mask_batch = []; labels_batch = []
     indices = list(range(len(input_data)))
 
     for shuffling_times in range(10):
         random.shuffle(indices)
 
-    for batch in range(num_batches_final):
+    for batch in range(num_batches):
         batch_indices = []
 
-        if batch < num_batches:
-            for _ in range(batchsize):
-                batch_indices.append(indices.pop())
-        else:   
-                batch_indices = indices
+        for j in range(batchsize):
+            batch_indices.append(indices.pop())
 
         if epoch_status <= shorter_len_perc:
             input_batch.append(torch.stack([input_data[index][:limited_seq_len] for index in batch_indices]).t())
@@ -229,27 +217,52 @@ def plot_training_error(epochs, training_error, validation_error, pathway):
 # BERT FINE-TUNING
 
 def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimizer, criterion, learning_rate: float, dataset: list, \
-    results_file, batchsize: int, epoch: int, log_interval: int, device, same_sample: bool=True, scaler = None) -> None: # top_attention_perc: float = None,
+    results_file, batchsize: int, epoch: int, log_interval, device, same_sample: bool=True, scaler = None) -> None:
 
     finetune_model.train()
     total_loss = 0
+    log_interval = 1
     start_time = time.time()
     att_weights_matrix = []
     for sample in range(len(dataset)):
 
         inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample)
 
-        #if top_attention_perc:
-        #    num_class_spectra = top_attention_perc * len(inputs) #TODO!! Just consider x% most relevant scans determined by attention
+        #num_class_spectra = top_attention_perc * len(inputs) TODO!! Just consider x% most relevant scans determined by attention
 
-        inside_train_error = []; hidden_vectors_sample = []
+        inside_train_error = []
+        hidden_vectors_sample = []
         with torch.cuda.amp.autocast() if device.type == 'cuda' else torch.autocast(device_type=device.type):
             for batch in range(len(inputs)):  
                 hidden_vectors_batch = BERT_model(inputs[batch].to(device))
                 hidden_vectors_sample.append(hidden_vectors_batch)
+            #print('BERT output size: ', hidden_vectors_sample[0].size())
+            #print('Attention layer input size: ', torch.cat(hidden_vectors_sample).size())
             att_weights, output = finetune_model(torch.cat(hidden_vectors_sample).to(device))
+            #print('Final output size: ', output.size())
+            
             att_weights_matrix.append(att_weights)
+        '''
+        max_size = max([len(sample) for sample in att_weights_matrix])
+        best_att_weights_matrix = [tensor.tolist() for tensor in att_weights_matrix]
+   
+        for sample in best_att_weights_matrix:
+            if len(sample) < max_size:
+                sample.append([0]*(max_size - len(sample)))
 
+        plt.matshow(best_att_weights_matrix)
+        plt.xlabel('Scans / Spectra')
+        plt.ylabel('Samples / Patients')
+        plt.colorbar()
+        plt.show()
+        '''
+        '''
+        # If at some point we wanna take the x% most informative spectra
+        _, used_spectra = torch.topk(att_weights, num_class_spectra)
+
+        used_output = output[used_spectra].to(device)
+        used_labels = class_labels[used_spectra].to(device)
+        '''
         loss = criterion(torch.squeeze(output), torch.cat(class_labels))
         optimizer.zero_grad()
         scaler.scale(loss).backward() if scaler else loss.backward()
@@ -262,12 +275,12 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
             ms_per_batch = (time.time() - start_time) * 1000 / log_interval
             cur_loss = total_loss / log_interval
             inside_train_error.append(cur_loss)
-            #print(f'| epoch {epoch:3d} | {sample:2d}/{len(dataset):1d} samples | '
-            #f'lr {learning_rate:02.5f} | ms/sample {ms_per_batch:5.2f} | '
-            #f'loss {loss:5.2f} \n')
-            results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{len(inputs):5d} batches | '
-            f'lr {learning_rate:02.2f} | ms/batch {ms_per_batch:5.2f} | '
-            f'loss {loss:5.2f} \n')     
+            print(f'| epoch {epoch:3d} | {sample:2d}/{len(dataset):1d} samples | '
+            f'lr {learning_rate:02.5f} | ms/sample {ms_per_batch:5.2f} | '
+            f'loss {loss:5.2f} \n')
+            #results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{len(inputs):5d} batches | '
+            #f'lr {learning_rate:02.2f} | ms/batch {ms_per_batch:5.2f} | '
+            #f'loss {loss:5.2f} \n')     
             results_file.flush()
             total_loss = 0
             start_time = time.time()
@@ -293,9 +306,9 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
     val_loss = total_loss / len(inputs)
     elapsed = time.time() - start_time
 
-    results_file.write(f'| end of epoch {current_epoch:3d} | time: {elapsed:5.2f}s | '
-          f'validation loss {val_loss:5.2f} \n')
-    results_file.flush()
+    #results_file.write(f'| end of epoch {current_epoch:3d} | time: {elapsed:5.2f}s | '
+    #      f'validation loss {val_loss:5.2f} \n')
+    #results_file.flush()
 
     return val_loss
 
@@ -321,7 +334,7 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
         for shuffling_times in range(10):
             random.shuffle(indices)
 
-    for batch in range(num_batches_final):
+    for batch in range(num_batches_final) if last_batch else range(num_batches):
         batch_indices = []
         if batch < num_batches:
             for _ in range(batchsize):
@@ -375,7 +388,7 @@ def plot_att_weights(att_weights_matrix, pathway):
 
 
 def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
-             batchsize: int, aggregation_layer: string, labels, pathway: str, device: torch.device):
+             batchsize: int, aggregation_layer: string, device: torch.device):
 
     assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
 
@@ -384,6 +397,7 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     dataframe = []
 
     for sample in range(len(dataset)):
+        #print('Sample number: ', sample + 1)
         inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample=True)
 
         hidden_vectors_sample = []
@@ -391,7 +405,7 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
             hidden_vectors_batch = model(inputs[batch].to(device)) # torch.Tensor of size [batchsize x embed_size]
             hidden_vectors_sample.append(hidden_vectors_batch.tolist()) 
 
-        hidden_vectors = [scan for batched_scans in hidden_vectors_sample for scan in batched_scans] # after appending all batches --> list of size [# scans/sample x embed_size]
+        hidden_vectors = [scan for batched_scans in hidden_vectors_sample for scan in batched_scans] # after appending all batches --> list ogf size [# scans/sample x embed_size]
 
         # As preparation for the content "skeleton" of the database, name of sample for each of its scans, the number of scan ("ret_time"), and the label for each scan of the sample again (class_labels[0][0], because all will have the same for each sample)
         samples_and_time = list(map(list,zip([samples_names[sample]]*len(dataset[sample][0]), range(len(dataset[sample][0])), [class_labels[0][0].tolist()]*len(dataset[sample][0]))))
@@ -403,13 +417,15 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     if aggregation_layer == "sample":
         df = df.groupby('Sample_name').mean() # apply mean over each components for all embeddings part of the same sample
         # df size now is [#samples x (3 + embed_size)]
+    ## !! QUESTION: Is this the proper way to approach it? Felix got good clustering applying mean, but mathematical meaning?
     embedding = reducer.fit_transform(df)
 
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=df.Label)
-    plt.legend(handles=scatter.legend_elements()[0], labels = labels, title="Patients status")
+    plt.legend(handles=scatter.legend_elements()[0], labels = ['Healthy', 'ALD'], title="Patients status")
     plt.title('UMAP projection of the embedding space by patients', fontsize=14)
-    plt.savefig(pathway)
-
+    plt.savefig('/home/projects/cpr_10006/people/enrcop/Figures/Embeddings/BERT_vanilla_HPvsALD.png')
+    #plt.savefig(os.getcwd() + '/Embedding.png')
+    #plt.show()
       
 
 

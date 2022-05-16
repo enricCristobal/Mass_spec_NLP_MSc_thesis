@@ -10,12 +10,16 @@ vocab = get_vocab(num_bins=50000)
 
 # Define directory where sample files are found
 data_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens/scan_desc_tokens_CLS/'
+# !!labels_path define correctly default DataLoader function in data_load_clean
+##LOCAL PATHWAY
+#data_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\' 
+#labels_dir = data_dir + 'ALD_histological_scores.csv'
 
 # Get the samples used for the ploting
 samples, _ = divide_train_val_samples(data_dir, 0.9, 0) # !!LOCAL THING: 0.9 to avoid histological scores csv file
-
+## !!TODO: For now we need to repeat this samples line because we call it later on the plotembedding function
 dataset, _, _ = FineTuneBERTDataLoader(data_dir, vocab, training_percentage=0.9, validation_percentage=0,\
-    class_param='kleiner', kleiner_type = 'advanced')
+    class_param='Group2')
 
 # Define the model network for BERT model and load trained weights
 BERT_model = BERT_trained(ntoken = len(vocab), 
@@ -27,11 +31,11 @@ BERT_model = BERT_trained(ntoken = len(vocab),
             dropout = 0.1).to(device)
 
 # If decoder layer removal for fine-tuning done and weights saved:
-#model_weights = '/home/projects/cpr_10006/people/enrcop/models/bert_vanilla_small_weights.pt'
-#BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
-##LOCAL PATHWAY
-model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
+model_weights = '/home/projects/cpr_10006/people/enrcop/models/bert_vanilla_small_weights.pt'
 BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
+##LOCAL PATHWAY
+#model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
+#BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
 
 '''
 # When saved properly with the General Checkpoint and decoder layer removal for fine tuning not done yet
@@ -52,7 +56,6 @@ plot_embeddings(model=BERT_model,
                 dataset=dataset,
                 batchsize = 32,
                 aggregation_layer='sample', # For now just 'sample' and 'ret_time'
-                labels = ['Healthy', 'ALD'],
-                pathway = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_finetune/BERT_vanilla/Group2_HPvsALD/Embedding1.0.png',
+                pathway = '/home/projects/cpr_10006/people/enrcop/Figures/Embeddings/BERT_vanilla_HPvsALD.png',
                 device = device)
 
