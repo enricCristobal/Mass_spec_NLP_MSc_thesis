@@ -204,6 +204,7 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
 def plot_training_error(epochs, training_error, validation_error, pathway):
     plt.plot(range(1, epochs+1), training_error, label='Training error')
     plt.plot(range(1, epochs+1), validation_error, label='Validation error')
+    plt.title('Training and validation error BERT model')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
@@ -213,7 +214,7 @@ def plot_training_error(epochs, training_error, validation_error, pathway):
 # BERT FINE-TUNING
 
 def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimizer, criterion, learning_rate: float, dataset: list, \
-    results_file, batchsize: int, epoch: int, log_interval: int, device, same_sample: bool=True, scaler = None) -> None: # top_attention_perc: float = None,
+    results_file, batchsize: int, epoch: int, sample_interval: int, device, same_sample: bool=True, scaler = None) -> None: # top_attention_perc: float = None,
 
     finetune_model.train()
     total_loss = 0
@@ -226,7 +227,7 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         #if top_attention_perc:
         #    num_class_spectra = top_attention_perc * len(inputs) #TODO!! Just consider x% most relevant scans determined by attention
 
-        inside_train_error = []; hidden_vectors_sample = []
+        hidden_vectors_sample = []
         with torch.no_grad():
             for batch in range(len(inputs)):  
                 hidden_vectors_batch = BERT_model(inputs[batch].to(device))
@@ -263,9 +264,9 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
         scaler.update() if scaler else None
         total_loss += loss.item()
 
-        if sample % log_interval == 0 and sample > 0:
-            ms_per_batch = (time.time() - start_time) * 1000 / log_interval
-            cur_loss = total_loss / log_interval
+        if sample % sample_interval == 0 and sample > 0:
+            ms_per_batch = (time.time() - start_time) * 1000 / sample_interval
+            cur_loss = total_loss / sample_interval
             inside_train_error.append(cur_loss)
             results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{len(inputs):5d} batches | '
             f'lr {learning_rate:02.2f} | ms/batch {ms_per_batch:5.2f} | '

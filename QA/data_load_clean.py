@@ -226,7 +226,7 @@ def create_training_dataset(sample, vocab, samples_dir, \
             mask_labels = [all_labels.pop(random.randrange(len(all_labels))) for _ in range(round(0.8*len(all_labels)))] # of the 15%, 80% will be changed to [MASK] token
             operation = random.choice((ceil,floor)) # we include this to not affect for odd values by doing either round or floor so it is a fair 50-50% for the remaining 20% of labels
             change_labels = [all_labels.pop(random.randrange(len(all_labels))) for _ in range(operation(0.5*len(all_labels)))]  # of the 15%, 10% is changed for a random value of the vocab
-            same_labels = all_labels # missing 10% of labels are for tokens kept the same
+            # missing 10% of labels are for tokens kept the same
             
             # all_labels = [(index1, value1), (index2, value2), ...]
             # change input accordingly

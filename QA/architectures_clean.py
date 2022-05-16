@@ -231,7 +231,7 @@ class FineTune_classification(nn.Module):
         return att_weights_softmax, output
 
 
-## TODO!!: Fine-tuning model that also updates BERT model weights
+## TODO!!: Fine-tuning model that also updates BERT model weights (Not possible with current resources in Computerome)
 class FineTuneBERT(nn.Module):
     def __init__(self, BERT_model, attention_network, classification_layer):
         super(FineTuneBERT, self).__init__()
