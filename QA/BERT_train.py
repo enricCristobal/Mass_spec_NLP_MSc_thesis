@@ -16,13 +16,13 @@ num_bins = 50000 #!!!CHANGE TO 10000
 vocab = get_vocab(num_bins)
 
 # Get Data specifying the directory where raw data is or we want to store
-files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens_0.05/no_CLS_no_desc_no_rettime_10000_tokens/'
+files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens_0.0125/no_CLS_no_desc_no_rettime_10000_tokens/'
 ##LOCALM PATHWAY!!:
 #files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\'
-evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_no_cls_no_desc_no_ret_small_0.05_10000.txt', "w")
+evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/train_loss_no_cls_no_desc_no_ret_small_0.0125_10000.txt', "w")
 
-save_model = '/home/projects/cpr_10006/people/enrcop/models/train/BERT_small_no_CLS_no_desc_no_rettime_0.05_10000.pt'
-save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_train/BERT_small_no_CLS_no_desc_no_rettime_0.05_10000.png'
+save_model = '/home/projects/cpr_10006/people/enrcop/models/BERT_train/BERT_small_no_CLS_no_desc_no_rettime_0.0125_10000.pt'
+save_plot = '/home/projects/cpr_10006/people/enrcop/Figures/BERT_train/BERT_small_no_CLS_no_desc_no_rettime_0.0125_10000.png'
 
 
 train_ds, val_ds = TrainingBERTDataLoader(files_dir, 
