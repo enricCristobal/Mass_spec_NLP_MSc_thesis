@@ -159,7 +159,7 @@ class AttentionNetwork(nn.Module):
             att_linear = nn.Linear(n_input_features, self.n_units)
             att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
             fc_attention.append(att_linear)
-            fc_attention.append(nn.GELU()) # from reference nn.SELU() used(changed to GeLU)
+            fc_attention.append(nn.SELU()) # from reference nn.SELU() used(tried with GeLU too)
             n_input_features = self.n_units
         
         att_linear = nn.Linear(n_input_features, 1)
@@ -173,7 +173,7 @@ class AttentionNetwork(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim] (After applying torch.cat to all the embeddings of all scans per sample)
                 Comment: Remember we will aplly mean over all the embeddings of all tokens per scan in the sample.
         Returns:
-            attention_weights: Tensor of shape [#sacns per sample, 1]
+            attention_weights: Tensor of shape [#scans per sample, 1]
         """
         attention_weights = self.attention_nn(src)
         return attention_weights
@@ -198,7 +198,7 @@ class ClassificationLayer(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim]
 
         Returns:
-            output: Tensor of shape [#sacns per sample, num_labels]
+            output: Tensor of shape [#scans per sample, num_labels]
         """
         output = self.classification_layer(src)
         return output
@@ -219,14 +219,11 @@ class FineTune_classification(nn.Module):
             src: Tensor, shape [# scans per sample, embedding_dim]
 
         Returns:
-            output: Tensor of shape [#sacns per sample, num_labels]
+            output: Tensor of shape [#scans per sample, num_labels]
         """
         att_weights = self.attention_nn(src)
-        #print('Att layer output size: ', att_weights.size())
         att_weights_softmax = F.softmax(att_weights, dim=0)
-        #print('Att layer after softmax size: ', att_weights_softmax.size())
         src_after_attention = src * att_weights_softmax
-        #print('BERT model times att weights size: ', src_after_attention.size())
         output = self.classification_nn(src_after_attention)
         return att_weights_softmax, output
 
