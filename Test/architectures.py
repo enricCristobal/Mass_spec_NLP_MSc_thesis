@@ -68,11 +68,11 @@ class PositionalEncoding(nn.Module):
 
 class BERT_scheduler:
 
-    def __init__(self, optimizer, learning_rate, perc_warmup_steps, total_training_steps):
+    def __init__(self, optimizer, learning_rate, total_training_steps):
         self.optimizer = optimizer
         self.learning_rate = learning_rate
         self._step = 0
-        self.warmup_steps = perc_warmup_steps * total_training_steps
+        self.warmup_steps = 10000 #perc_warmup_steps * total_training_steps (if we wanted to warmup a specific percentage of the training)
         self.total_training_steps = total_training_steps
         self._rate = 0
 
@@ -106,11 +106,11 @@ class BERT_scheduler:
         for p in self.optimizer.param_groups:
             p['lr'] = self.learning_rate * rate
         self._rate = rate
-        #print('Learning rate: ', self.learning_rate * rate)
         self.optimizer.step()
 
     def get_lr(self):
         return self.learning_rate * self._rate
+
 
 class BERT_trained(nn.Module):
     # In this class we will get rid of the decoder layer, as we'll have deleted those layers from the state_dict from the training model
@@ -159,7 +159,7 @@ class AttentionNetwork(nn.Module):
             att_linear = nn.Linear(n_input_features, self.n_units)
             att_linear.weight.data.normal_(0.0, np.sqrt(1 / np.prod(att_linear.weight.shape)))
             fc_attention.append(att_linear)
-            fc_attention.append(nn.GELU()) # from reference nn.SELU() used(changed to GeLU)
+            fc_attention.append(nn.SELU()) # from reference nn.SELU() used(tried with GeLU too)
             n_input_features = self.n_units
         
         att_linear = nn.Linear(n_input_features, 1)
@@ -179,9 +179,9 @@ class AttentionNetwork(nn.Module):
         return attention_weights
 
 
-class ClassificationLayer(nn.Module):
+class LinearClassificationLayer(nn.Module):
     def __init__(self, d_model: int, num_labels: int):
-        super(ClassificationLayer, self).__init__()
+        super(LinearClassificationLayer, self).__init__()
         self.num_labels = num_labels
         self.classification_layer = nn.Linear(d_model, num_labels) 
         
@@ -203,7 +203,25 @@ class ClassificationLayer(nn.Module):
         output = self.classification_layer(src)
         return output
 
+class CNNClassificationLayer(nn.Module):
+    def __init__(self, num_labels: int, heigth: int, width: int, kernel: int, padding: int): # might get idea from AttentionNetwork to make it dynamic
+        super(CNNClassificationLayer, self).__init__()
+        self.conv1 = nn.Conv2d(1,16,kernel_size=kernel, padding=padding)
+        self.pool = nn.MaxPool2d(2,2)
+        self.conv2 = nn.Conv2d(16, 1, kernel_size=kernel, padding=padding)
+        self.fc1 = nn.LazyLinear(12)
+        self.fc2 = nn.Linear(12,num_labels)
 
+    def forward(self, src: Tensor) -> Tensor:
+        src = torch.unsqueeze(torch.unsqueeze(src, dim=0), dim= 0)
+        src = self.pool(F.relu(self.conv1(src)))
+        src = self.pool(F.relu(self.conv2(src)))
+        src = src.view(1, -1) # flatten list so we have one prediction per sample in the end
+        src = F.relu(self.fc1(src))
+        output = self.fc2(src)
+        return output
+
+        
 # In reality with this class we won't be fine-tuning BERT, but just the attention and classification layers, since it will
 # be in those that we'll apply backpropagation while just using BERT as a frozen model
 # Later, defining a class where also BERT model is included could be tried out
@@ -222,16 +240,13 @@ class FineTune_classification(nn.Module):
             output: Tensor of shape [#scans per sample, num_labels]
         """
         att_weights = self.attention_nn(src)
-        #print('Att layer output size: ', att_weights.size())
         att_weights_softmax = F.softmax(att_weights, dim=0)
-        #print('Att layer after softmax size: ', att_weights_softmax.size())
         src_after_attention = src * att_weights_softmax
-        #print('BERT model times att weights size: ', src_after_attention.size())
         output = self.classification_nn(src_after_attention)
         return att_weights_softmax, output
 
 
-## TODO!!: Fine-tuning model that also updates BERT model weights (Not possible with current resources in Computerome)
+## TODO!!: Fine-tuning model that also updates BERT model weights (Not possible in Computerome for resource limits)
 class FineTuneBERT(nn.Module):
     def __init__(self, BERT_model, attention_network, classification_layer):
         super(FineTuneBERT, self).__init__()

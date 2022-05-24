@@ -2,12 +2,11 @@
 
 import string
 import torch
-from torch import nn, Tensor
+from torch import nn, softmax
 from torchtext.vocab import build_vocab_from_iterator
 
 import pandas as pd
 import random
-import os
 import time
 from statistics import mean
 import numpy as np
@@ -58,21 +57,21 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
      """
 
     model.train()  # turn on train mode
+    print_loss = 0.
     total_loss = 0.
-    final_loss = 0.
     epoch_status = round(current_epoch/total_epochs, 2) # Get training stage to do sequence shortening if required
     start_time = time.time()
 
-    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
+    inputs, targets, padding_mask, masking_labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
     # Batching data after randomizing the order among all the scans of all the training samples with the defined batch size
-    
+    #with torch.cuda.amp.GradScaler():
     for batch in range(num_batches):
-        output = model(inputs[batch].to(device), src_mask[batch].to(device))
+        output = model(inputs[batch].to(device), padding_mask[batch].to(device))
         loss = 0
-        for data_sample in range(batchsize): # each spectrum has different masking schema/masked positions
-            single_output = output[:, data_sample] # predicted output by BERT and decoder
-            single_target = targets[batch][:, data_sample] # expected target for this spectrum
-            labels_output = labels[batch][data_sample] # components of vector that were masked --> must be used for backpropagation
+        for scan in range(batchsize): # each spectrum has different masking schema/masked positions
+            single_output = output[:, scan] # predicted output by BERT and decoder
+            single_target = targets[batch][:, scan] # expected target for this spectrum
+            labels_output = masking_labels[batch][scan] # components of vector that were masked --> must be used for backpropagation
             # Try to predefine tensor and allocate later!!
             # Get just output and target in masked positions, which are the ones that must be used for training our model
             batch_output = torch.stack(list(map(single_output.__getitem__, labels_output)))
@@ -88,23 +87,23 @@ def BERT_train(model: nn.Module, optimizer, criterion, scheduler, dataset: list,
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         scaler.step(optimizer) if scaler else optimizer.step()
         scaler.update() if scaler else None
+        print_loss += loss.item() / batchsize
         total_loss += loss.item() / batchsize
-        final_loss += loss.item() / batchsize
         
         if batch % log_interval == 0 and batch > 0:
             lr = scheduler.get_lr()
             ms_per_batch = (time.time() - start_time) * 1000 / log_interval
-            cur_loss = total_loss / log_interval
+            cur_loss = print_loss / log_interval
             results_file.write(f'| epoch {current_epoch:3d} | {batch:5d}/{num_batches:5d} batches | '
-                    f'lr {lr:02.5f} | ms/batch {ms_per_batch:5.2f} | '
+                    f'lr {lr:e} | ms/batch {ms_per_batch:5.2f} | '
                     f'loss {cur_loss:5.2f} \n')     
             results_file.flush()
-            total_loss = 0
+            print_loss = 0
             start_time = time.time()
 
         scheduler.step() # As it is done in BERT paper, we change learning rate at each batch/step
     
-    return final_loss/ num_batches
+    return total_loss/ num_batches
 
 
 def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batchsize: int, current_epoch: int, total_epochs: float, \
@@ -129,15 +128,16 @@ def BERT_evaluate(model: nn.Module, criterion, dataset: list, results_file, batc
     epoch_status = round(current_epoch/total_epochs, 2)
     total_loss = 0.
     
-    inputs, targets, src_mask, labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
+    inputs, targets, padding_mask, masking_labels, num_batches = get_training_batch(dataset, batchsize, epoch_status, limited_seq_len, shorter_len_perc)
+    #with torch.cuda.amp.GradScaler():
     with torch.no_grad():
         for batch in range(num_batches):
-            output = model(inputs[batch].to(device), src_mask[batch].to(device))
+            output = model(inputs[batch].to(device), padding_mask[batch].to(device))
             loss = 0
-            for data_sample in range(batchsize):
-                single_output = output[:, data_sample]
-                single_target = targets[batch][:, data_sample]
-                labels_output = labels[batch][data_sample]
+            for scan in range(batchsize):
+                single_output = output[:, scan]
+                single_target = targets[batch][:, scan]
+                labels_output = masking_labels[batch][scan]
 
                 batch_output = torch.stack(list(map(single_output.__getitem__, labels_output))).to(device)
                 batch_output = batch_output.to(device)
@@ -169,8 +169,8 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
 
     input_data = flatten_list(data_ds, 0)
     target_data = flatten_list(data_ds, 1)
-    att_mask = flatten_list(data_ds, 2)
-    labels = flatten_list(data_ds, 3)
+    padding_mask = flatten_list(data_ds, 2)
+    masking_labels = flatten_list(data_ds, 3)
 
     num_batches = len(input_data) // batchsize
 
@@ -188,15 +188,15 @@ def get_training_batch(data_ds, batchsize, epoch_status, limited_seq_len, shorte
         if epoch_status <= shorter_len_perc:
             input_batch.append(torch.stack([input_data[index][:limited_seq_len] for index in batch_indices]).t())
             target_batch.append(torch.stack([target_data[index][:limited_seq_len] for index in batch_indices]).t())
-            att_mask_batch.append(torch.stack([att_mask[index][:limited_seq_len] for index in batch_indices])) # because size passed needs to be (N, S), being N batchsize and S seq_len
+            att_mask_batch.append(torch.stack([padding_mask[index][:limited_seq_len] for index in batch_indices])) # because size passed needs to be (N, S), being N batchsize and S seq_len
             # Just get those smaller than limited_seq_len          
-            labels_batch.append([[val for val in labels[index] if val < limited_seq_len] for index in batch_indices])
+            labels_batch.append([[val for val in masking_labels[index] if val < limited_seq_len] for index in batch_indices])
             
         else:
             input_batch.append(torch.stack([input_data[index] for index in batch_indices]).t())
             target_batch.append(torch.stack([target_data[index] for index in batch_indices]).t())
-            att_mask_batch.append(torch.stack([att_mask[index] for index in batch_indices]))
-            labels_batch.append([labels[index] for index in batch_indices])
+            att_mask_batch.append(torch.stack([padding_mask[index] for index in batch_indices]))
+            labels_batch.append([masking_labels[index] for index in batch_indices])
 
     return input_batch, target_batch, att_mask_batch, labels_batch, num_batches
 
@@ -217,65 +217,55 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
     results_file, batchsize: int, epoch: int, sample_interval: int, device, same_sample: bool=True, scaler = None) -> None: # top_attention_perc: float = None,
 
     finetune_model.train()
-    total_loss = 0
+    print_loss = 0.
+    total_loss = 0.
     start_time = time.time()
     att_weights_matrix = []
+
     for sample in range(len(dataset)):
-
         inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample)
-
+ 
         #if top_attention_perc:
         #    num_class_spectra = top_attention_perc * len(inputs) #TODO!! Just consider x% most relevant scans determined by attention
 
         hidden_vectors_sample = []
         with torch.no_grad():
-            for batch in range(len(inputs)):  
+        #with torch.cuda.amp.GradScaler():
+            for batch in range(len(inputs)): 
                 hidden_vectors_batch = BERT_model(inputs[batch].to(device))
+                #print(hidden_vectors_batch.size())
                 hidden_vectors_batch_cpu = hidden_vectors_batch.cpu()
                 del hidden_vectors_batch
-                hidden_vectors_sample.append(hidden_vectors_batch_cpu)
+                hidden_vectors_sample.append(hidden_vectors_batch_cpu) 
+
         att_weights, output = finetune_model(torch.cat(hidden_vectors_sample))
-            #print('Final output size: ', output.size())
         att_weights_matrix.append(att_weights)
-        '''
-        max_size = max([len(sample) for sample in att_weights_matrix])
-        best_att_weights_matrix = [tensor.tolist() for tensor in att_weights_matrix]
-   
-        for sample in best_att_weights_matrix:
-            if len(sample) < max_size:
-                sample.append([0]*(max_size - len(sample)))
-        plt.matshow(best_att_weights_matrix)
-        plt.xlabel('Scans / Spectra')
-        plt.ylabel('Samples / Patients')
-        plt.colorbar()
-        plt.show()
-        '''
         '''
         # If at some point we wanna take the x% most informative spectra
         _, used_spectra = torch.topk(att_weights, num_class_spectra)
         used_output = output[used_spectra].to(device)
         used_labels = class_labels[used_spectra].to(device)
         '''
-        loss = criterion(torch.squeeze(output), torch.cat(class_labels))
+        loss = criterion(output, torch.cat(class_labels)[:len(output)])
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(finetune_model.parameters(), 0.5)
         scaler.step(optimizer) if scaler else optimizer.step()
         scaler.update() if scaler else None
+        print_loss += loss.item()
         total_loss += loss.item()
 
         if sample % sample_interval == 0 and sample > 0:
             ms_per_batch = (time.time() - start_time) * 1000 / sample_interval
-            cur_loss = total_loss / sample_interval
-            inside_train_error.append(cur_loss)
+            cur_loss = print_loss / sample_interval
             results_file.write(f'| epoch {epoch:3d} | {batch:5d}/{len(inputs):5d} batches | '
-            f'lr {learning_rate:02.2f} | ms/batch {ms_per_batch:5.2f} | '
-            f'loss {loss:5.2f} \n')     
+            f'lr {learning_rate:e} | ms/batch {ms_per_batch:5.2f} | '
+            f'loss {cur_loss:5.2f} \n')     
             results_file.flush()
-            total_loss = 0
+            print_loss = 0
             start_time = time.time()
 
-    return inside_train_error, att_weights_matrix
+    return total_loss/len(dataset), att_weights_matrix
 
 
 def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, criterion, dataset: list, results_file, batchsize: int, \
@@ -283,16 +273,24 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
 
     finetune_model.eval()
     total_loss = 0.
+    n_correct_predictions = 0
     # For validation, we don't just pass one sample at a time, but randomize
     inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
-
+    
     with torch.no_grad():
         for batch in range(len(inputs)): # len(inputs) == num_batches
             hidden_vectors = BERT_model(inputs[batch].to(device))
-            _, output = finetune_model(hidden_vectors.to(device))
-            loss = criterion(output, class_labels[batch].to(device))
+            _, output = finetune_model(hidden_vectors.cpu())
+            loss = criterion(output, class_labels[batch][:len(output)])
             total_loss += loss.item()
-        
+
+            # Get correct predictions
+            softmax = nn.Softmax(dim=1)
+            _, predicted = torch.max(softmax(output), 1)
+            n_correct_predictions += (predicted == class_labels[batch]).sum().item()
+
+    acc = 100.0 * n_correct_predictions / (len(inputs) * batchsize)
+       
     val_loss = total_loss / len(inputs)
     elapsed = time.time() - start_time
 
@@ -300,12 +298,15 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, cri
           f'validation loss {val_loss:5.2f} \n')
     results_file.flush()
 
-    return val_loss
+    return val_loss, acc
 
 
 def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool): 
     """Used for fine-tuning when both mixing spectra from different samples under the same batch and not (same_sample boolean)
-    We consider the input is already just one sample"""
+    We consider the input is already just one sample.
+    Parameters:
+    - same_sample: we use same_sample as True when training because we want to get the attention matrix
+    """
 
     flatten = flatten_sample if same_sample == True else flatten_list
     input_data = flatten(sample_data_ds, 0)
@@ -385,7 +386,7 @@ def plot_individual_axis_distribution(embedding, patient_type: str, axis: str):
     plt.savefig('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Computerome_results\\BERT_vanilla_embeddings\\Individual_analysis\\%s_%s_distribution.png' %(patient_type, axis))
 
 
-def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
+def plot_BERT_embeddings(model: nn.Module, samples_names: list, dataset: list, \
              batchsize: int, aggregation_layer: string, labels, pathway: str, patient_type: str, device: torch.device):
 
     #assert aggregation_layer in ["sample", "ret_time"], "aggregation_layer must be either at 'sample' level or 'ret_time' level"
@@ -414,6 +415,7 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
     
     # Size df is [# total scans over all samples x (3 + embed_size)]
     if aggregation_layer == "sample":
+        ## !!! Applying the mean here!!
         df = df.groupby('Sample_name').mean() # apply mean over each components for all embeddings part of the same sample
         # df size now is [#samples x (2 + embed_size)] (Sample_name has become the row name --> doesn't count as column)
         embedding = reducer.fit_transform(df.iloc[:,2:])
@@ -423,7 +425,6 @@ def plot_embeddings(model: nn.Module, samples_names: list, dataset: list, \
         plt.savefig(pathway)
         #plt.show()
         ## !! QUESTION: Is this the proper way to approach it? Felix got good clustering applying mean, but mathematical meaning?
-
     else:
         embedding = reducer.fit_transform(df.iloc[:,3:]) # Remove the sample_name, scan_order, and label of the fitting
         plot_individual_axis_distribution(embedding, patient_type, axis='X')
