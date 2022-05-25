@@ -268,26 +268,41 @@ def BERT_finetune_train(BERT_model: nn.Module, finetune_model: nn.Module, optimi
     return total_loss/len(dataset), att_weights_matrix
 
 
-def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, criterion, dataset: list, results_file, batchsize: int, \
+def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, classification_layer: str, criterion, dataset: list, results_file, batchsize: int, \
     current_epoch: int, start_time, device) -> float:
 
     finetune_model.eval()
     total_loss = 0.
     n_correct_predictions = 0
-    # For validation, we don't just pass one sample at a time, but randomize
-    inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
-    
-    with torch.no_grad():
-        for batch in range(len(inputs)): # len(inputs) == num_batches
-            hidden_vectors = BERT_model(inputs[batch].to(device))
-            _, output = finetune_model(hidden_vectors.cpu())
-            loss = criterion(output, class_labels[batch][:len(output)])
-            total_loss += loss.item()
+    if classification_layer == 'CNN':
+        
+        for sample in range(len(dataset)):
+            inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample = True)
+            hidden_vectors_sample = []
+            with torch.no_grad():
+                for batch in range(len(inputs)): # len(inputs) == num_batches
+                    hidden_vectors = BERT_model(inputs[batch].to(device))
+                    hidden_vectors_cpu = hidden_vectors.cpu()
+                    del hidden_vectors
+                    hidden_vectors_sample.append(hidden_vectors_cpu) 
 
-            # Get correct predictions
-            softmax = nn.Softmax(dim=1)
-            _, predicted = torch.max(softmax(output), 1)
-            n_correct_predictions += (predicted == class_labels[batch]).sum().item()
+            _, output = finetune_model(torch.cat(hidden_vectors_sample))
+    
+    else:
+        # For validation, we don't just pass one sample at a time, but randomize
+        inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
+        with torch.no_grad():
+            for batch in range(len(inputs)): # len(inputs) == num_batches
+                hidden_vectors = BERT_model(inputs[batch].to(device))
+                _, output = finetune_model(hidden_vectors.cpu())
+
+    loss = criterion(output, class_labels[batch][:len(output)])
+    total_loss += loss.item()
+
+    # Get correct predictions
+    softmax = nn.Softmax(dim=1)
+    _, predicted = torch.max(softmax(output), 1)
+    n_correct_predictions += (predicted == class_labels[batch]).sum().item()
 
     acc = 100.0 * n_correct_predictions / (len(inputs) * batchsize)
        
@@ -311,9 +326,7 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
     flatten = flatten_sample if same_sample == True else flatten_list
     input_data = flatten(sample_data_ds, 0)
     labels_data = flatten(sample_data_ds, 1)
-    
     num_batches = len(input_data) // batchsize
-    
     # We do same process of randomising a bit, so we don't follow the retention times of the experiment in order
     input_batch = []; labels_batch = []; 
     indices = list(range(len(input_data)))

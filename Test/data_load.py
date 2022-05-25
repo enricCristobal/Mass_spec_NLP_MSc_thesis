@@ -3,7 +3,7 @@
 from cmath import inf
 import pickle
 import os
-from importlib_metadata import files
+
 import numpy as np
 import random
 import pandas as pd
@@ -392,7 +392,7 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, min_scan_count,
     
     # convert to list of tensors
     input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input_list]
-
+    
     # Get the target tensor (meaning the class_id for this sample linked to each scan of the sample)
     label_tensor_list = [torch.tensor(label, dtype=torch.int64) for _ in range(len(input_tensor_list))]
     

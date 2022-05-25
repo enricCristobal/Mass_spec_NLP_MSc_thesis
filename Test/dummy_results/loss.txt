@@ -1,1 +1,0 @@
-| end of epoch   1 | time:  0.69s | validation loss  0.59 

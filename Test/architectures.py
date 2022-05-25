@@ -203,6 +203,7 @@ class LinearClassificationLayer(nn.Module):
         output = self.classification_layer(src)
         return output
 
+
 class CNNClassificationLayer(nn.Module):
     def __init__(self, num_labels: int, heigth: int, width: int, kernel: int, padding: int): # might get idea from AttentionNetwork to make it dynamic
         super(CNNClassificationLayer, self).__init__()
