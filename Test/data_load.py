@@ -409,6 +409,7 @@ def count_scans(samples_dir, samples):
             min_scan_count = scan_count
     return min_scan_count
 
+
 def compensate_imbalance(labels_list, samples_list):
     n_first_class = labels_list.count(0)
     n_second_class = labels_list.count(1)
@@ -436,7 +437,6 @@ def compensate_imbalance(labels_list, samples_list):
     shuffling = list(zip(samples_list, labels_list))
     for shuffling_times in range(10):
         random.shuffle(shuffling)
-    
     samples_list, labels_list = zip(*shuffling)
 
     return samples_list, labels_list
@@ -450,8 +450,6 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
     finetune_samples = train_samples + val_samples
 
     labels_df = fine_tune_ds(finetune_samples, class_param, kleiner_type, labels_path)
-    
-    # TODO!!: Issues regarding imbalanced dataset!!! Could be fixed using weight in cross entropy loss
 
     #print(len(labels_df.index[labels_df['class_id'] == 0]))
     #print(len(labels_df.index[labels_df['class_id'] == 1]))
