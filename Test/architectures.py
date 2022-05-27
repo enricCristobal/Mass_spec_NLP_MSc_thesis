@@ -151,6 +151,7 @@ class AttentionNetwork(nn.Module):
     # following code for AttentionNetwork obtained from https://github.com/ml-jku/DeepRC/blob/master/deeprc/architectures.py
     def __init__(self, n_input_features: int, n_layers: int = 2, n_units: int = 32):
         super(AttentionNetwork, self).__init__()
+        
         self.n_attention_layers = n_layers
         self.n_units = n_units
        
@@ -180,18 +181,30 @@ class AttentionNetwork(nn.Module):
 
 
 class LinearClassificationLayer(nn.Module):
-    def __init__(self, d_model: int, num_labels: int):
+    def __init__(self, n_input_features: int, num_labels: int, n_layers: int = 2, n_units: int = 32):
         super(LinearClassificationLayer, self).__init__()
-        self.num_labels = num_labels
-        self.classification_layer = nn.Linear(d_model, num_labels) 
         
-        self.init_weights()
-    
-    def init_weights(self) -> None:
+        self.input_features = n_input_features
+        self.num_labels = num_labels
+        self.n_layers = n_layers
+        self.n_units = n_units
         initrange = 0.1
-        self.classification_layer.bias.data.zero_()
-        self.classification_layer.weight.data.uniform_(-initrange, initrange)
-    
+
+        fc_linear = []
+        for _ in range(self.n_layers):
+            linear_layer = nn.Linear(n_input_features, n_units)
+            linear_layer.bias.data.zero_()
+            linear_layer.weight.data.uniform_(-initrange, initrange)
+            fc_linear.append(linear_layer)
+            fc_linear.append(nn.ReLU())
+            n_input_features = n_units
+        
+        final_layer = nn.Linear(n_input_features, num_labels)
+        final_layer.bias.data.zero_()
+        final_layer.weight.data.uniform_(-initrange, initrange)
+        fc_linear.append(final_layer)
+        self.classification_layer = torch.nn.Sequential(*fc_linear)
+
     def forward(self, src: Tensor) -> Tensor:
         """
         Args:
@@ -200,12 +213,13 @@ class LinearClassificationLayer(nn.Module):
         Returns:
             output: Tensor of shape [#scans per sample, num_labels]
         """
+
         output = self.classification_layer(src)
         return output
 
 
 class CNNClassificationLayer(nn.Module):
-    def __init__(self, num_labels: int, heigth: int, width: int, kernel: int, padding: int): # might get idea from AttentionNetwork to make it dynamic
+    def __init__(self, num_labels: int, kernel: int, padding: int): # might get idea from AttentionNetwork to make it dynamic
         super(CNNClassificationLayer, self).__init__()
         self.conv1 = nn.Conv2d(1,16,kernel_size=kernel, padding=padding)
         self.pool = nn.MaxPool2d(2,2)
@@ -222,10 +236,10 @@ class CNNClassificationLayer(nn.Module):
         output = self.fc2(src)
         return output
 
-        
+
 # In reality with this class we won't be fine-tuning BERT, but just the attention and classification layers, since it will
 # be in those that we'll apply backpropagation while just using BERT as a frozen model
-# Later, defining a class where also BERT model is included could be tried out
+# Later, defining a class where also BERT model is included could be tried out --> Resource limits
 class FineTune_classification(nn.Module):
     def __init__(self, attention_network, classification_layer):
         super(FineTune_classification, self).__init__()
