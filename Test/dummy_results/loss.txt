@@ -1,0 +1,3 @@
+[Epoch   1: Training loss: 0.0516] / Validation loss: 0.0521  
+[Epoch   2: Training loss: 0.0494] / Validation loss: 0.0514  
+[Epoch   3: Training loss: 0.0494] / Validation loss: 0.0510  

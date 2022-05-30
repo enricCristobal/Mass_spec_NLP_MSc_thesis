@@ -7,3 +7,5 @@ Test/dummy_data/*
 Computerome_results/*
 Test/embed_analysis_reservoir/*
 Test/embedding_analysis_data/*
+Test/no_CLS_desc_no_rettime_10000_tokens/*
+Test/only_numbers_short/*

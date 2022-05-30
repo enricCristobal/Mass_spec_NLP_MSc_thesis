@@ -1,32 +1,30 @@
 #!/usr/bin/env python
 
 import torch
-from torch import nn, Tensor
-import torch.nn.functional as F
-
-
-from statistics import mean
+from torch import nn
 import time
-import matplotlib.pyplot as plt
 
 from data_load import *
 from utils import *
 from architectures import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.manual_seed(52)
+torch.cuda.manual_seed(52)
 
 # Define vocabulary (special tokens already considered) and type if classification layer
 vocab = get_vocab(num_bins=50000)
 
-# Define the architecture chosen for the fine-tuning
+# Define the requirements for the fine-tuning: crop_input requuired if CNN
 class_layer = 'CNN'
+crop_input = True
 att_matrix = True # If CNN att_matrix must always be True
 
 # Define pathways for the different uploads and savings
 #files_dir = '/home/projects/cpr_10006/projects/gala_ald/data/plasma_scans/BERT_tokens_0.0125/no_CLS_no_desc_no_rettime_10000_tokens/'
 #evolution_file = open('/home/projects/cpr_10006/people/enrcop/loss_files/BERT_finetune/BERT_small/finetune_loss_CNN_group2_no_cls_no_desc_no_rettime_0.0125_10000.txt', "w")
 ## LOCAL PATHWAY
-files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\'
+files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_data\\'
 evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_results\\loss.txt', "w")
 model_checkpoint = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\BERT_small_no_CLS_no_desc_no_rettime_0.0125_10000.pt'
 # Load BERT weights
@@ -44,9 +42,9 @@ save_finetuning_model = '/home/projects/cpr_10006/people/enrcop/models/BERT_fine
 
 train_finetune_ds, val_finetune_ds, num_labels, min_scan_count = FineTuneBERTDataLoader(files_dir, 
                                                                 vocab, 
-                                                                training_percentage=0.7, 
-                                                                validation_percentage=0.3, 
-                                                                classification_layer=class_layer, 
+                                                                training_percentage=0.4, 
+                                                                validation_percentage=0.4, 
+                                                                crop_input=crop_input, 
                                                                 class_param = 'Group2',
 labels_path = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\ALD_histological_scores.csv') # Group2 is equivalent to Healthy vs ALD
 
@@ -85,8 +83,10 @@ model, BERT_fine_tune_train = define_architecture(class_layer=class_layer,
                                                 num_labels=num_labels,
                                                 n_layers_attention=2,
                                                 n_units_attention=32,
+                                                num_channels=16,
                                                 kernel_size=2,
                                                 padding=1,
+                                                n_units_linear_CNN=12,
                                                 n_layers_linear=None,
                                                 n_units_linear=None)
 

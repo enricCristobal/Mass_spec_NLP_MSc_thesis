@@ -219,13 +219,15 @@ class LinearClassificationLayer(nn.Module):
 
 
 class CNNClassificationLayer(nn.Module):
-    def __init__(self, num_labels: int, kernel: int, padding: int): # might get idea from AttentionNetwork to make it dynamic
+    def __init__(self, num_labels: int, num_channels: int, kernel: int, padding: int, n_units: int): # might get idea from AttentionNetwork to make it dynamic
         super(CNNClassificationLayer, self).__init__()
-        self.conv1 = nn.Conv2d(1,16,kernel_size=kernel, padding=padding)
+        self.conv1 = nn.Conv2d(1,num_channels,kernel_size=kernel, padding=padding)
         self.pool = nn.MaxPool2d(2,2)
-        self.conv2 = nn.Conv2d(16, 1, kernel_size=kernel, padding=padding)
-        self.fc1 = nn.LazyLinear(12)
-        self.fc2 = nn.Linear(12,num_labels)
+        self.BatchNorm2d = nn.BatchNorm2d(num_channels)
+        self.conv2 = nn.Conv2d(num_channels, 1, kernel_size=kernel, padding=padding)
+        self.fc1 = nn.LazyLinear(n_units)
+        self.BatchNorm1d = nn.BatchNorm1d(n_units)
+        self.fc2 = nn.Linear(n_units,num_labels)
 
     def forward(self, src: Tensor) -> Tensor:
         src = torch.unsqueeze(torch.unsqueeze(src, dim=0), dim= 0)
@@ -277,10 +279,83 @@ class FineTuneBERT(nn.Module):
         src_after_attention = src * att_weights_softmax
         output = self.classification_nn(src_after_attention)
         return att_weights_softmax, output
+
+
+# VAE as baseline
+
+VAE_encoder_size = lambda input_size, kernel_size, stride, padding: int((input_size + 2* padding - kernel_size) / stride + 1)
+output_padding = lambda output_size, input_size, kernel_size, stride, padding: output_size  - (input_size-1)*stride + 2*padding - kernel_size
+
+class ConvVAE(nn.Module):
+    def __init__(self, n_channels: int, kernel: int, stride: int, padding: int, input_heigth: int, input_width: int, latent_dim: int=2):
+        super(ConvVAE, self).__init__()
+    
+        #Encoder 
+        self.enc1 = nn.Conv2d(1, n_channels, kernel_size=kernel, stride=stride, padding=padding)
+        self.enc2 = nn.Conv2d(n_channels, n_channels*2, kernel_size=kernel, stride=stride, padding=padding)
+        self.enc3 = nn.Conv2d(n_channels*2, 16, kernel_size=kernel, stride=stride, padding=padding)
+
+        layer_dims = []
+        # Output encoder size:
+        heigth = input_heigth
+        width = input_width
+        for _ in range(3):
+            heigth = VAE_encoder_size(heigth, kernel_size=kernel, stride=stride, padding=padding)
+            width = VAE_encoder_size(width, kernel_size=kernel, stride=stride, padding=padding)
+            layer_dims.append([heigth, width])
+         
+        #fully connected layers for learning representations
+        self.fc1 = nn.LazyLinear(128)
+        self.fc_mu = nn.Linear(128, latent_dim)
+        self.fc_log_var = nn.Linear(128, latent_dim)
+        self.fc2 = nn.Linear(latent_dim, 16*layer_dims[2][0]*layer_dims[2][1])
+
+        #Decoder
+        output_padding_dec1 = output_padding(layer_dims[1][0], heigth, kernel, stride, padding)
+        self.dec1 = nn.ConvTranspose2d(16, n_channels*2, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec1)
+        output_padding_dec2 = output_padding(layer_dims[0][0], layer_dims[1][0], kernel, stride, padding)
+        self.dec2 = nn.ConvTranspose2d(n_channels*2, n_channels, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec2)
+        output_padding_dec3 = output_padding(input_heigth, layer_dims[0][0], kernel, stride, padding)
+        self.dec3 = nn.ConvTranspose2d(n_channels, 1, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec3)
+    
+    def reparametrize(self, mu, log_var):
+        """
+        mu: mean from the econder's latent space
+        log_var: log variance from the encoder's latent space
+        """
+        # Reparametrixation trick: instead of x ~ N(mu, std),
+        # x = mu + std * N(0,1)
+        # and now we can compute gradients w.r.t mu and std
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        sample = mu + eps*std
+        return sample 
+
+    def forward(self, src):
+        #Encoding
+        src = F.relu(self.enc1(src))
+        src = F.relu(self.enc2(src))
+        src = F.relu(self.enc3(src))
         
+        batch, _, heigth, width = src.shape   
+        src = src.flatten().reshape(batch,-1)
+        hidden = self.fc1(src)
+        # get mu and log_var
+        mu = self.fc_mu(hidden)
+        log_var = self.fc_log_var(hidden)
+        #get latent vector thorugh reparametrization
+        latent_space_samples = self.reparametrize(mu, log_var) #this is our latent representation
+        z = self.fc2(latent_space_samples) 
+        z = z.view(batch, 16, heigth, width)
+        #Decoding
+        x = F.relu(self.dec1(z))
+        x = F.relu(self.dec2(x))
+        reconstruction = torch.sigmoid(self.dec3(x))
 
-
-
-
-
-
+        final_width = reconstruction.shape[3]
+        if final_width < 512:
+            reconstruction = F.pad(reconstruction, pad=(0,512-final_width))
+        elif final_width > 512:
+            reconstruction = reconstruction[:,:,:,:512]
+        
+        return latent_space_samples, reconstruction, mu, log_var

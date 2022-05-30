@@ -10,6 +10,8 @@ from utils import *
 from architectures import *
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+torch.manual_seed(52)
+torch.cuda.manual_seed(52)
 
 # Define voabulary
 num_bins = 10000 

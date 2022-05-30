@@ -410,9 +410,7 @@ def count_scans(samples_dir, samples):
     return min_scan_count
 
 
-def compensate_imbalance(labels_list, samples_list):
-    n_first_class = labels_list.count(0)
-    n_second_class = labels_list.count(1)
+def compensate_imbalance(labels_list, samples_list, n_first_class, n_second_class):
 
     n_bigger_class = max(n_first_class, n_second_class)
     n_smaller_class = min(n_first_class, n_second_class)
@@ -442,15 +440,14 @@ def compensate_imbalance(labels_list, samples_list):
     return samples_list, labels_list
     
 
-def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, classification_layer: str, \
+def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, crop_input: bool, \
     class_param: str = 'Group2', kleiner_type: str = None, labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
     "Simplify 'DataLoader' creation for fine-tuning BERT in one function."
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples
-
     labels_df = fine_tune_ds(finetune_samples, class_param, kleiner_type, labels_path)
-
+    
     #print(len(labels_df.index[labels_df['class_id'] == 0]))
     #print(len(labels_df.index[labels_df['class_id'] == 1]))
     
@@ -460,10 +457,18 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
     val_labels, val_finetune_samples= get_labels(labels_df, val_samples)
 
     # Compensate for class imbalance (for now just done for a binary classification which is always our case)
-    train_labels, train_finetune_samples = compensate_imbalance(train_labels, train_finetune_samples)
-    val_labels, val_finetune_samples = compensate_imbalance(val_labels, val_finetune_samples)
+    # Just compensat if one class is present more than 10% with respect to the other
+    
+    train_first_class = train_labels.count(0); train_second_class = train_labels.count(1)
+    val_first_class = val_labels.count(0); val_second_class = val_labels.count(1)
 
-    if classification_layer == 'CNN': # keep all samples with same number of scans for CNN
+    if abs(train_first_class-train_second_class)/min(train_first_class, train_second_class) > 0.1:
+        train_finetune_samples, train_labels = compensate_imbalance(train_labels, train_finetune_samples, train_first_class, train_second_class)
+        
+    if abs(val_first_class-val_second_class)/min(val_first_class, val_second_class) > 0.1:
+        val_finetune_samples, val_labels = compensate_imbalance(val_labels, val_finetune_samples, val_first_class, val_second_class)
+    
+    if crop_input: # keep all samples with same number of scans for CNN or VAE with conv
         min_scan_count = count_scans(files_dir, finetune_samples)
     else:
         min_scan_count = None

@@ -18,7 +18,11 @@ import scipy.stats as stats
 
 from architectures import *
 
+torch.manual_seed(52)
+torch.cuda.manual_seed(52)
+
 # VOCABULARY DEFINITION
+
 def get_vocab(num_bins):
     """Define vocab used for our model defining the number of bins used to bin the scans."""
     all_tokens = []
@@ -260,12 +264,12 @@ def old_load_BERT_model(weights_pathway, new_model, ntoken, embed_size, d_hid, n
     return new_BERT_model
 
 def define_architecture(class_layer: str, att_matrix: bool, n_input: int, num_labels: int, n_layers_attention: int, n_units_attention: int, \
-    kernel_size: int, padding: int, n_layers_linear: int, n_units_linear: int):
+    num_channels: int, kernel_size: int, padding: int, n_units_linear_CNN: int, n_layers_linear: int, n_units_linear: int):
 
     if class_layer == 'CNN':
         #scans_count = min_scan_count // batchsize * batchsize # this is the number of scans that will be obtained after the BERT model to pass to CNN
         attention_network = AttentionNetwork(n_input_features = n_input, n_layers = n_layers_attention, n_units = n_units_attention)
-        classification_layer = CNNClassificationLayer(num_labels=num_labels, kernel = kernel_size, padding = padding)
+        classification_layer = CNNClassificationLayer(num_labels=num_labels,num_channels=num_channels, kernel = kernel_size, padding = padding, n_units=n_units_linear_CNN)
         model = FineTune_classification(attention_network, classification_layer)
         BERT_fine_tune_train = BERT_finetune_train_att_matrix
 
@@ -577,3 +581,86 @@ def plot_BERT_embeddings(model: nn.Module, samples_names: list, dataset: list, \
         plt.xlabel('Projected embedding dim 1', fontsize=8)
         plt.ylabel('Projected embedding dim 2', fontsize=8)
         plt.savefig(pathway + '%s_patient_time_embedding.png' %(patient_type))
+
+
+#BASELINE MODELS
+
+##VAE
+
+def final_loss_VAE(bce_loss, mu, log_var):
+    """
+    This function will add the reconstruction loss (BCELoss) and the
+    KL-Divergence.
+    KL-Divergence = 0.5 * sum(1 + log(sigma^2) - mu^2 -sigma^2)
+    bce_loss: reconstruction loss
+    mu: mean from the latent vector
+    log_var: log varaiance from the latent vector
+    """
+
+    BCE = bce_loss
+    KLD = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+    return BCE+KLD
+
+
+def train_VAE(model, vocab, dataset, device, optimizer, criterion, batchsize):
+    model.train()
+    total_loss = 0.0
+    batch_input = []
+    labels = []
+    latent_space = []
+    final_len = len(dataset) // batchsize * batchsize
+
+    for sample in range(len(dataset)):
+        batch_input.append(torch.stack(flatten_sample(dataset[sample], 0)))
+        labels.append(flatten_sample(dataset[sample], 1)[0].tolist())
+
+        if len(batch_input) == batchsize:
+            batch = torch.stack(batch_input)[:, None, :, :]/float(len(vocab)) # prepare size for CNN of VAE
+            batch= batch.to(device)
+            optimizer.zero_grad()
+            latent_space_samples, reconstruction, mu, log_var = model(batch)
+            latent_space.append(latent_space_samples.tolist())
+            bce_loss = criterion(reconstruction, batch)
+            loss = final_loss_VAE(bce_loss, mu, log_var)
+            loss.backward()
+            total_loss += loss.item()
+            optimizer.step()
+            batch_input = []             
+    train_loss = total_loss/final_len
+    return train_loss, latent_space, labels[:final_len]
+
+
+def val_VAE(model, vocab, dataset, device, optimizer, criterion, batchsize):
+    model.eval()
+    total_loss = 0.0
+    batch_input = []
+    final_len = len(dataset) // batchsize * batchsize
+    for sample in range(len(dataset)):
+        batch_input.append(torch.stack(flatten_sample(dataset[sample], 0)))
+
+        if len(batch_input) == batchsize:
+            batch = torch.stack(batch_input)[:, None, :, :]/float(len(vocab)) # prepare size for CNN of VAE
+            batch= batch.to(device)
+            optimizer.zero_grad()
+            _, reconstruction, mu, log_var = model(batch)
+            bce_loss = criterion(reconstruction, batch)
+            loss = final_loss_VAE(bce_loss, mu, log_var)
+            loss.backward()
+            total_loss += loss.item()
+            optimizer.step()
+            batch_input = []
+    val_loss = total_loss/final_len
+    return val_loss
+
+
+def plot_VAE_embedding(latent_space_samples, labels, save_dir):
+    dim1_vec = []; dim2_vec = []
+    for dim1, dim2 in latent_space_samples:
+        dim1_vec.append(dim1)
+        dim2_vec.append(dim2)
+    scatter = plt.scatter(dim1_vec,dim2_vec, c=labels)
+    plt.title('VAE latent space')
+    plt.xlabel('Dimension 1')
+    plt.ylabel('Dimension 2')
+    #plt.legend(handles=scatter.legend_elements()[0], labels = labels, title="Patients status")
+    plt.savefig(save_dir)

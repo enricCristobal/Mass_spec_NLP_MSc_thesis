@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from sre_constants import CATEGORY_DIGIT
 import sys
 import copy
 
