@@ -44,19 +44,8 @@ BERT_model = BERT_trained(ntoken = len(vocab),
 model_weights = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\models\\bert_vanilla_small_weights.pt'
 BERT_model.load_state_dict(torch.load(model_weights, map_location=device))
 
-'''
-# When saved properly with the General Checkpoint and decoder layer removal for fine tuning not done yet
-BERT_model = BERT_trained(ntokens, emsize, nhead, d_hid, nlayers, activation, dropout).to(device)
-optimizer = optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, eps=1e-4)
-
-checkpoint = torch.load('/home/projects/cpr_10006/people/enrcop/models/{model_name}.pt')
-BERT_model.load_state_dict(checkpoint['model_state_dict'])
-
-# Check this part comparing to BERT_fine_tune_test.py process
-state_dict = copy.deepcopy(BERT_model.state_dict())
-del state_dict['decoder.weight']
-del state_dict['decoder.bias']
-'''
+#checkpoint = torch.load(model_weights, map_location=device)
+#BERT_model.load_state_dict(checkpoint['model_state_dict'], strict = False)
 
 plot_BERT_embeddings(model=BERT_model,
                 samples_names=samples,

@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 
+from cmath import inf
+from genericpath import sameopenfile
 import pickle
 import os
+
 import numpy as np
 import random
 import pandas as pd
@@ -282,44 +285,49 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
     chosen for factorizing samples.
     - Labels_path: Pathway to the file where data about samples is saved."""
 
-    assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis"], \
-        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner' (defining kleiner_type) and 'nas_steatosis'"
+    assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis_ordinal"], \
+        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner' (defining kleiner_type) and 'nas_steatosis_ordinal'"
     
     # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
-    labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param]) 
+    labels_df = pd.read_csv(labels_path, usecols=["File name", "Groups", class_param])
+    #labels_df["Date"] = ""
     
     # Due to some data format, we need to get rid of the first 4 and last 18 characters of each File_name for later matching purposes with proper file name
     beginning_file_name = labels_df['File name'].str.find(']') + 2
-    for i in range(len(labels_df)):
-        labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18] 
     
+    for i in range(len(labels_df)):
+        labels_df['File name'].iloc[i] = labels_df['File name'].iloc[i][beginning_file_name.iloc[i]:-18]
+        #labels_df['Date'].iloc[i] = labels_df["File name"].iloc[i][:8]
+
     labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in  
     labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
-   
+
     if class_param != 'Group2':
         labels_df = labels_df[~labels_df[class_param].isnull()] # Get rid of ALD patients with no scores for the chosen parameter
     
     # depending on the parameter, we have different binary classifications depending on the scores
     if class_param == 'Group2':
-        labels_df['class_id'] = labels_df[class_param].factorize()[0]
+        labels_df['class_id'] = labels_df[class_param].factorize(sort=True)[0] #sort to ensure ALD is 0 --> considered positive and HP is 1 (alphabetic sorting)
 
     elif class_param == 'nas_inflam':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[0,1])
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[1,0])
 
     elif class_param == 'kleiner':
         if kleiner_type == 'significant':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[1,0])
+            
         elif kleiner_type == 'advanced':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[1,0])
+  
     
-    elif class_param == 'nas_steatosis':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[0,1])
+    elif class_param == 'nas_steatosis_ordinal':
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[1,0])
     
     # If we want to save the original class name and know its id
     #category_id_df = df[[class_param, 'class_id']].drop_duplicates()
     #category_to_id = dict(category_id_df.values)
-
+ 
     return labels_df
 
 # Get datasets:
@@ -342,7 +350,7 @@ def get_labels(df, samples_list):
     return labels, samples_list
 
 
-def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int = 512):
+def create_finetuning_dataset(sample, vocab, samples_dir, label, min_scan_count, input_size: int = 512):
     """Function to process the raw data from text files with peak numbers to the tensors that 
     will be passed as input and target, as part of the DataLoaders.
     This is for the classification task.
@@ -362,20 +370,25 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int
         sentence.extend([pad]*pad_len)
         return sentence
     
-    def yield_tokens(sample):
+    def yield_tokens(sample, min_scan_count):
         tokenizer = get_tokenizer(None) # simple splitting of tokens (mostly bin numbers)
         fh = open(samples_dir + sample, 'r')
-        for line in fh:
-            token_list = tokenizer(line.rstrip())
+
+        if min_scan_count:
+            lines = fh.readlines()[:min_scan_count] # when CNN
+        else:
+            lines = fh.readlines()
+        
+        for i in range(len(lines)):
+            token_list = tokenizer(lines[i].rstrip())
             if len(token_list) < input_size:
                 tokens_pad = pad_tokens(token_list)
             else:
                 tokens_pad = token_list[:input_size]
             yield tokens_pad
 
-    # generate list (tokens)
-    data_iter = [yield_tokens(sample)]
-    
+    data_iter = [yield_tokens(sample, min_scan_count)]
+   
     # Generate tokens and pad if needed
     flat_list = [item for sublist in data_iter for item in sublist]
     input_list = [vocab(item) for item in flat_list]
@@ -389,26 +402,78 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, input_size: int
     return input_tensor_list, label_tensor_list
 
 
-def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, class_param: str = 'Group2', \
-    kleiner_type: str = None, labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
+def count_scans(samples_dir, samples):
+    min_scan_count = float('inf')
+    for sample in samples:
+        fh = open(samples_dir + sample, 'r')
+        scan_count = len(fh.readlines())
+        if scan_count < min_scan_count:
+            min_scan_count = scan_count
+    return min_scan_count
+
+
+def compensate_imbalance(labels_list, samples_list, n_first_class, n_second_class):
+
+    n_bigger_class = max(n_first_class, n_second_class)
+    n_smaller_class = min(n_first_class, n_second_class)
+    
+    if n_first_class > n_second_class:
+        potential_indices = [indices for indices, label in enumerate(labels_list) if label == 1]
+        potential_repeat_samples = [samples_list[index] for index in potential_indices]
+        min_label = 1
+    else:
+        potential_indices = [indices for indices, label in enumerate(labels_list) if label == 0]
+        potential_repeat_samples = [samples_list[index] for index in potential_indices]
+        min_label = 0
+    
+    selection = random.choices(potential_repeat_samples, k=(n_bigger_class - n_smaller_class))
+    
+    samples_list.extend(selection)
+    labels_list.extend([min_label]*(n_bigger_class - n_smaller_class))
+   
+    #Shuffle to avoid having all of the same minority class at the end of the datatasets
+    shuffling = list(zip(samples_list, labels_list))
+    for shuffling_times in range(10):
+        random.shuffle(shuffling)
+    samples_list, labels_list = zip(*shuffling)
+    
+    return samples_list, labels_list
+    
+
+def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, crop_input: bool, \
+    class_param: str = 'Group2', kleiner_type: str = None, labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
     "Simplify 'DataLoader' creation for fine-tuning BERT in one function."
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples
-
     labels_df = fine_tune_ds(finetune_samples, class_param, kleiner_type, labels_path)
     
-    # TODO!!: Issues regarding imbalanced dataset!!! Could be fixed using weight in cross entropy loss
-
     #print(len(labels_df.index[labels_df['class_id'] == 0]))
     #print(len(labels_df.index[labels_df['class_id'] == 1]))
-
+    
     num_labels = len(labels_df['class_id'].unique())
-
+    
     train_labels, train_finetune_samples = get_labels(labels_df, train_samples)
     val_labels, val_finetune_samples= get_labels(labels_df, val_samples)
 
-    train_finetune_ds = [create_finetuning_dataset(f, vocab, files_dir, train_labels[i]) for i,f in enumerate(train_finetune_samples)]
-    val_finetune_ds = [create_finetuning_dataset(f, vocab, files_dir, val_labels[i]) for i,f in enumerate(val_finetune_samples)]
+    # Compensate for class imbalance (for now just done for a binary classification which is always our case)
+    # Just compensat if one class is present more than 10% with respect to the other
+    
+    train_first_class = train_labels.count(0); train_second_class = train_labels.count(1)
+    val_first_class = val_labels.count(0); val_second_class = val_labels.count(1)
 
-    return train_finetune_ds, val_finetune_ds, num_labels
+    if abs(train_first_class-train_second_class)/min(train_first_class, train_second_class) > 0.1:
+        train_finetune_samples, train_labels = compensate_imbalance(train_labels, train_finetune_samples, train_first_class, train_second_class)
+        
+    if abs(val_first_class-val_second_class)/min(val_first_class, val_second_class) > 0.1:
+        val_finetune_samples, val_labels = compensate_imbalance(val_labels, val_finetune_samples, val_first_class, val_second_class)
+    
+    if crop_input: # keep all samples with same number of scans for CNN or VAE with conv
+        min_scan_count = count_scans(files_dir, finetune_samples)
+    else:
+        min_scan_count = None
+
+    train_finetune_ds = [create_finetuning_dataset(f, vocab, files_dir, train_labels[i], min_scan_count) for i,f in enumerate(train_finetune_samples)]
+    val_finetune_ds = [create_finetuning_dataset(f, vocab, files_dir, val_labels[i], min_scan_count) for i,f in enumerate(val_finetune_samples)]
+
+    return train_finetune_ds, val_finetune_ds, num_labels, min_scan_count
