@@ -302,25 +302,27 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
 
     labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in  
     labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
-   
+
     if class_param != 'Group2':
         labels_df = labels_df[~labels_df[class_param].isnull()] # Get rid of ALD patients with no scores for the chosen parameter
     
     # depending on the parameter, we have different binary classifications depending on the scores
     if class_param == 'Group2':
-        labels_df['class_id'] = labels_df[class_param].factorize()[0]
+        labels_df['class_id'] = labels_df[class_param].factorize(sort=True)[0] #sort to ensure ALD is 0 --> considered positive and HP is 1 (alphabetic sorting)
 
     elif class_param == 'nas_inflam':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[0,1])
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[1,0])
 
     elif class_param == 'kleiner':
         if kleiner_type == 'significant':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[1,0])
+            
         elif kleiner_type == 'advanced':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[1,0])
+  
     
     elif class_param == 'nas_steatosis_ordinal':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[0,1])
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[1,0])
     
     # If we want to save the original class name and know its id
     #category_id_df = df[[class_param, 'class_id']].drop_duplicates()
@@ -458,7 +460,7 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
 
     # Compensate for class imbalance (for now just done for a binary classification which is always our case)
     # Just compensat if one class is present more than 10% with respect to the other
-    
+    '''
     train_first_class = train_labels.count(0); train_second_class = train_labels.count(1)
     val_first_class = val_labels.count(0); val_second_class = val_labels.count(1)
 
@@ -467,7 +469,7 @@ def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, va
         
     if abs(val_first_class-val_second_class)/min(val_first_class, val_second_class) > 0.1:
         val_finetune_samples, val_labels = compensate_imbalance(val_labels, val_finetune_samples, val_first_class, val_second_class)
-    
+    '''
     if crop_input: # keep all samples with same number of scans for CNN or VAE with conv
         min_scan_count = count_scans(files_dir, finetune_samples)
     else:

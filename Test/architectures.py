@@ -292,8 +292,11 @@ class ConvVAE(nn.Module):
     
         #Encoder 
         self.enc1 = nn.Conv2d(1, n_channels, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc1 = nn.BatchNorm2d(n_channels)
         self.enc2 = nn.Conv2d(n_channels, n_channels*2, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc2 = nn.BatchNorm2d(n_channels*2)
         self.enc3 = nn.Conv2d(n_channels*2, 16, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc3 = nn.BatchNorm2d(16)
 
         layer_dims = []
         # Output encoder size:
@@ -313,9 +316,11 @@ class ConvVAE(nn.Module):
         #Decoder
         output_padding_dec1 = output_padding(layer_dims[1][0], heigth, kernel, stride, padding)
         self.dec1 = nn.ConvTranspose2d(16, n_channels*2, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec1)
+        self.BatchNorm_dec1 = nn.BatchNorm2d(n_channels*2)
         output_padding_dec2 = output_padding(layer_dims[0][0], layer_dims[1][0], kernel, stride, padding)
         self.dec2 = nn.ConvTranspose2d(n_channels*2, n_channels, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec2)
         output_padding_dec3 = output_padding(input_heigth, layer_dims[0][0], kernel, stride, padding)
+        self.BatchNorm_dec2 = nn.BatchNorm2d(n_channels)
         self.dec3 = nn.ConvTranspose2d(n_channels, 1, kernel_size=kernel, stride=stride, padding=padding, output_padding=output_padding_dec3)
     
     def reparametrize(self, mu, log_var):
@@ -334,8 +339,11 @@ class ConvVAE(nn.Module):
     def forward(self, src):
         #Encoding
         src = F.relu(self.enc1(src))
+        src = self.BatchNorm_enc1(src)
         src = F.relu(self.enc2(src))
+        src = self.BatchNorm_enc2(src)
         src = F.relu(self.enc3(src))
+        src = self.BatchNorm_enc3(src)
         
         batch, _, heigth, width = src.shape   
         src = src.flatten().reshape(batch,-1)
@@ -349,7 +357,9 @@ class ConvVAE(nn.Module):
         z = z.view(batch, 16, heigth, width)
         #Decoding
         x = F.relu(self.dec1(z))
+        x = self.BatchNorm_dec1(x)
         x = F.relu(self.dec2(x))
+        x = self.BatchNorm_dec2(x)
         reconstruction = torch.sigmoid(self.dec3(x))
 
         final_width = reconstruction.shape[3]
@@ -359,3 +369,54 @@ class ConvVAE(nn.Module):
             reconstruction = reconstruction[:,:,:,:512]
         
         return latent_space_samples, reconstruction, mu, log_var
+
+
+class ConvVAE_encoder(nn.Module):
+    def __init__(self, n_channels: int, kernel: int, stride: int, padding: int, latent_dim: int=2):
+        super(ConvVAE_encoder, self).__init__()
+    
+        #Encoder 
+        self.enc1 = nn.Conv2d(1, n_channels, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc1 = nn.BatchNorm2d(n_channels)
+        self.enc2 = nn.Conv2d(n_channels, n_channels*2, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc2 = nn.BatchNorm2d(n_channels*2)
+        self.enc3 = nn.Conv2d(n_channels*2, 16, kernel_size=kernel, stride=stride, padding=padding)
+        self.BatchNorm_enc3 = nn.BatchNorm2d(16)
+         
+        #fully connected layers for learning representations
+        self.fc1 = nn.LazyLinear(128)
+        self.fc_mu = nn.Linear(128, latent_dim)
+        self.fc_log_var = nn.Linear(128, latent_dim)
+
+    def reparametrize(self, mu, log_var):
+        """
+        mu: mean from the econder's latent space
+        log_var: log variance from the encoder's latent space
+        """
+        # Reparametrixation trick: instead of x ~ N(mu, std),
+        # x = mu + std * N(0,1)
+        # and now we can compute gradients w.r.t mu and std
+        std = torch.exp(0.5*log_var)
+        eps = torch.randn_like(std)
+        sample = mu + eps*std
+        return sample 
+
+    def forward(self, src):
+        #Encoding
+        src = F.relu(self.enc1(src))
+        src = self.BatchNorm_enc1(src)
+        src = F.relu(self.enc2(src))
+        src = self.BatchNorm_enc2(src)
+        src = F.relu(self.enc3(src))
+        src = self.BatchNorm_enc3(src)
+
+        batch = src.shape[0]   
+        src = src.flatten().reshape(batch,-1)
+        hidden = self.fc1(src)
+        # get mu and log_var
+        mu = self.fc_mu(hidden)
+        log_var = self.fc_log_var(hidden)
+        #get latent vector thorugh reparametrization
+        latent_space_samples = self.reparametrize(mu, log_var) #this is our latent representation
+        
+        return latent_space_samples

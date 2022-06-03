@@ -20,15 +20,18 @@ files_dir = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\o
 evolution_file = open('C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_results\\loss.txt', "w")
 
 save_baseline_model = '/home/projects/cpr_10006/people/enrcop/models/Baseline/VAE/basic.pt'
-save_loss = '/home/projects/cpr_10006/people/enrcop/Figures/VAE/vanilla_VAE_loss.txt'
+save_loss = '/home/projects/cpr_10006/people/enrcop/loss_files/VAE/vanilla_VAE_loss.txt'
 save_latent_fig = '/home/projects/cpr_10006/people/enrcop/Figures/VAE/vanilla_VAE.png'
+#save_model = '/home/projects/cpr_10006/people/enrcop/models/VAE/VAE_vanilla.pt'
+save_model = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\dummy_results\\test_VAE_model.pt'
 
 train_ds, val_ds, num_labels, min_scan_count = FineTuneBERTDataLoader(files_dir, 
                                                                 vocab, 
-                                                                training_percentage=0.6, 
+                                                                training_percentage=0.8, 
                                                                 validation_percentage=0.4, 
                                                                 crop_input = True, 
-                                                                class_param = 'nas_inflam',
+                                                                class_param = 'Group2',
+                                                                kleiner_type=None,
 labels_path = 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Test\\test_data\\ALD_histological_scores.csv') # Group2 is equivalent to Healthy vs ALD
 
 model = ConvVAE(n_channels=2,
@@ -48,6 +51,8 @@ criterion = nn.MSELoss()
 
 training_loss = []
 validation_loss = []
+best_val_loss = float('inf')
+best_model = None
 
 for epoch in range(1, epochs+1):
     train_loss, latent_space_samples, labels = train_VAE(model, vocab, train_ds, device, optimizer, criterion, batchsize=batch_size)
@@ -56,7 +61,17 @@ for epoch in range(1, epochs+1):
     val_loss = val_VAE(model, vocab, val_ds, device, optimizer, criterion, batchsize=batch_size)
     validation_loss.append(val_loss)
 
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        torch.save({'epoch': epoch,
+                   'model_state_dict': model.state_dict(),
+                   'optimizer_state_dict': optimizer.state_dict(),
+                   'loss': train_loss
+                    #}, 'C:\\Users\\enric\\OneDrive\\Escriptori\\TFM\\01_Code\\Code\\Dummy_results\\bert_model.pt')
+                    }, save_model)
+
     evolution_file.write(f'[Epoch {epoch:3d}]: Training loss: {train_loss:.4f} / Validation loss: {val_loss:.4f}  \n')
 
-plot_BERT_training_error(epochs, training_loss, validation_loss, save_loss)
-plot_VAE_embedding(latent_space_samples, labels, save_latent_fig)
+#plot_BERT_training_error(epochs, training_loss, validation_loss, save_loss)
+#plt.clf()
+#plot_VAE_embedding(latent_space_samples, labels, save_latent_fig)

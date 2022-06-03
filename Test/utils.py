@@ -15,6 +15,7 @@ import numpy as np
 import umap.umap_ as umap
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+import sklearn.metrics as skl
 
 from architectures import *
 
@@ -221,6 +222,7 @@ def plot_training_error(epochs, training_error, validation_error, pathway):
 
 # BERT FINE-TUNING
 
+'''
 def load_BERT_model(weights_pathway, old_model, new_model, ntoken, embed_size, d_hid, nhead, nlayers, device):
     
     BERT_model = old_model(ntoken = ntoken, 
@@ -262,6 +264,7 @@ def old_load_BERT_model(weights_pathway, new_model, ntoken, embed_size, d_hid, n
     new_BERT_model.load_state_dict(torch.load(weights_pathway, map_location=device))
     
     return new_BERT_model
+'''
 
 def define_architecture(class_layer: str, att_matrix: bool, n_input: int, num_labels: int, n_layers_attention: int, n_units_attention: int, \
     num_channels: int, kernel_size: int, padding: int, n_units_linear_CNN: int, n_layers_linear: int, n_units_linear: int):
@@ -389,10 +392,11 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, att
     BERT_model.eval()
     finetune_model.eval()
     total_loss = 0.
-    n_correct_predictions = 0
-
+    #n_correct_predictions = 0
+    y_true = []; y_pred = []
     if att_matrix: 
         for sample in range(len(dataset)):
+
             inputs, class_labels = get_finetune_batch(dataset[sample], batchsize, same_sample = True)
             hidden_vectors_sample = []
             with torch.no_grad():
@@ -407,15 +411,24 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, att
             total_loss += loss.item()
             softmax = nn.Softmax(dim=1)
             _, predicted = torch.max(softmax(output), 1)
-            n_correct_predictions += (predicted == class_labels[0][0]).sum().item()
+            y_pred.append(predicted.numpy())
 
+            if class_layer == 'CNN':
+                y_true.append(class_labels[0][0].tolist())
+                val_loss = total_loss / len(dataset)
+            else:
+                y_true.append(torch.cat(class_labels).tolist())
+                val_loss = total_loss / (len(output)*len(dataset))
+                          
+            #n_correct_predictions += (predicted == class_labels[0][0]).sum().item()
+        '''
         if class_layer == 'CNN':
             acc = 100.0 * n_correct_predictions / len(dataset)
             val_loss = total_loss / len(dataset)
         else:
-            acc = 100.0 * n_correct_predictions / (len(output) * len(dataset))         
+            acc = 100.0 * n_correct_predictions / (len(output) * len(dataset))      
             val_loss = total_loss / (len(output)*len(dataset))
-
+        '''    
     else:
         # For validation, we don't just pass one sample at a time, but randomize
         inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = False)
@@ -431,18 +444,52 @@ def BERT_finetune_evaluate(BERT_model: nn.Module, finetune_model: nn.Module, att
             total_loss += loss.item()
             softmax = nn.Softmax(dim=1)
             _, predicted = torch.max(softmax(output), 1)
-            n_correct_predictions += (predicted == class_labels[batch]).sum().item()
-            
-        acc = n_correct_predictions / (len(inputs) * batchsize)
-        val_loss = total_loss / len(inputs)
 
+            y_pred.append(predicted.numpy())
+            y_true.append(class_labels[batch].tolist())
+
+            #n_correct_predictions += (predicted == class_labels[batch]).sum().item()
+            
+        #acc = n_correct_predictions / (len(inputs) * batchsize)
+        val_loss = total_loss / len(inputs)
+    
+    y_pred = [item for sublist in y_pred for item in sublist]
+    y_true = [item for sublist in y_true for item in sublist]
+    
+    acc = skl.accuracy_score(y_pred, y_true)
+    
     elapsed = time.time() - start_time
 
     results_file.write(f'| end of epoch {current_epoch:3d} | time: {elapsed:5.2f}s | '
           f'validation loss {val_loss:5.2f} \n')
     results_file.flush()
 
-    return val_loss, acc
+    return val_loss, acc, y_true, y_pred
+
+
+def get_metrics(y_true, y_pred, ROC_curve: bool, ROC_fig_pathway):
+    print(y_true, y_pred)
+    cm = skl.confusion_matrix(y_true, y_pred)
+    print(cm)
+    TP = cm[0,0]; FN = cm[0,1]; FP = cm[1,0]; TN = cm[1,1]
+
+    precision = TP/(FP + TP)
+    recall = TP/(TP + FN)
+    F1_score = 2*precision*recall/(precision+recall)
+
+    if ROC_curve:
+        fpr, tpr, _ = skl.roc_curve(y_true,  y_pred)
+        auc = skl.roc_auc_score(y_true, y_pred)
+
+        # create ROC curve
+        plt.plot(fpr,tpr,label="AUC="+str(round(auc, 3)))
+        plt.title('ROC curve')
+        plt.ylabel('True Positive Rate')
+        plt.xlabel('False Positive Rate')
+        plt.legend(loc=4)
+        plt.savefig(ROC_fig_pathway)
+
+    return cm, precision, recall, F1_score
 
 
 def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool): 
@@ -455,9 +502,10 @@ def get_finetune_batch(sample_data_ds, batchsize, same_sample: bool):
     flatten = flatten_sample if same_sample == True else flatten_list
     input_data = flatten(sample_data_ds, 0)
     labels_data = flatten(sample_data_ds, 1)
-
+    
     num_batches = len(input_data) // batchsize
-    # We do same process of randomising a bit, so we don't follow the retention times of the experiment in order
+    
+    # We do same process of randomizing a bit, so we don't follow the retention times of the experiment in order
     input_batch = []; labels_batch = []; 
     indices = list(range(len(input_data)))
 
@@ -625,7 +673,8 @@ def train_VAE(model, vocab, dataset, device, optimizer, criterion, batchsize):
             loss.backward()
             total_loss += loss.item()
             optimizer.step()
-            batch_input = []             
+            batch_input = []
+            labels = []             
     train_loss = total_loss/final_len
     return train_loss, latent_space, labels[:final_len]
 
@@ -635,6 +684,7 @@ def val_VAE(model, vocab, dataset, device, optimizer, criterion, batchsize):
     total_loss = 0.0
     batch_input = []
     final_len = len(dataset) // batchsize * batchsize
+
     for sample in range(len(dataset)):
         batch_input.append(torch.stack(flatten_sample(dataset[sample], 0)))
 
@@ -656,6 +706,7 @@ def val_VAE(model, vocab, dataset, device, optimizer, criterion, batchsize):
 def plot_VAE_embedding(latent_space_samples, labels, save_dir):
     dim1_vec = []; dim2_vec = []
     for dim1, dim2 in latent_space_samples:
+        print(dim1)
         dim1_vec.append(dim1)
         dim2_vec.append(dim2)
     scatter = plt.scatter(dim1_vec,dim2_vec, c=labels)
@@ -663,4 +714,80 @@ def plot_VAE_embedding(latent_space_samples, labels, save_dir):
     plt.xlabel('Dimension 1')
     plt.ylabel('Dimension 2')
     #plt.legend(handles=scatter.legend_elements()[0], labels = labels, title="Patients status")
-    plt.savefig(save_dir)
+    #plt.savefig(save_dir)
+    plt.show()
+
+
+def train_class_VAE(VAE_model, class_network, vocab, dataset, device, optimizer, criterion, batchsize):
+    VAE_model.eval()
+    class_network.train()
+    total_loss = 0.0
+    batch_input = []; labels = []
+    final_len = len(dataset) // batchsize * batchsize
+
+    #TODO: Implement with get_finetune_batch
+    #inputs, class_labels = get_finetune_batch(dataset, batchsize, same_sample = True)
+
+    #for batch in range(len(inputs)): # len(inputs) == num_batches    
+    for sample in range(len(dataset)):
+        
+        batch_input.append(torch.stack(flatten_sample(dataset[sample], 0)))
+        labels.append(flatten_sample(dataset[sample], 1)[0])
+        
+        if len(batch_input) == batchsize:
+            batch = torch.stack(batch_input)[:, None, :, :]/float(len(vocab)) # prepare size for CNN of VAE
+            batch= batch.to(device)
+            labels = torch.stack(labels)
+            with torch.no_grad():
+                latent_space_samples = VAE_model(batch) # no need to have gradient values for VAE
+            output = class_network(latent_space_samples)
+            optimizer.zero_grad()
+            loss = criterion(output, labels)
+            loss.backward()
+            total_loss += loss.item()
+            optimizer.step()
+            batch_input = []; labels = []       
+    
+    train_loss = total_loss/final_len
+
+    return train_loss
+
+
+def val_class_VAE(VAE_model, class_network, vocab, dataset, device, optimizer, criterion, batchsize):
+    VAE_model.eval()
+    class_network.eval()
+    total_loss = 0.0
+    batch_input = []; labels = []; y_true = []; y_pred = []
+    final_len = len(dataset) // batchsize * batchsize
+    softmax = nn.Softmax(dim=1)
+
+    for sample in range(len(dataset)):
+        batch_input.append(torch.stack(flatten_sample(dataset[sample], 0)))
+        labels.append(flatten_sample(dataset[sample], 1)[0])
+
+        if len(batch_input) == batchsize:
+            batch = torch.stack(batch_input)[:, None, :, :]/float(len(vocab)) # prepare size for CNN of VAE
+            batch= batch.to(device)
+            labels = torch.stack(labels)
+            with torch.no_grad():
+                latent_space_samples = VAE_model(batch) # no need to have gradient values for VAE
+            output = class_network(latent_space_samples)
+            optimizer.zero_grad()
+            loss = criterion(output, labels)
+            loss.backward()
+            total_loss += loss.item()
+            optimizer.step()
+
+            _, predicted = torch.max(softmax(output), 1)
+
+            y_pred.append(predicted.numpy())
+            y_true.append(labels.tolist())
+            batch_input = []; labels = []
+      
+    y_pred = [item for sublist in y_pred for item in sublist]
+    y_true = [item for sublist in y_true for item in sublist]
+    
+    acc = skl.accuracy_score(y_pred, y_true)
+
+    val_loss = total_loss/final_len
+    return val_loss, acc, y_true, y_pred
