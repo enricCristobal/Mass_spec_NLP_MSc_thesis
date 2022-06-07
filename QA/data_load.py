@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 from cmath import inf
+from genericpath import sameopenfile
 import pickle
 import os
 
@@ -219,35 +220,46 @@ def create_training_dataset(sample, vocab, samples_dir, \
 
         potential_masking_input = input[j:last_masking_index] # j to avoid special tokens beginning sentence
         masking_labels = random.sample(list(enumerate(potential_masking_input)), round(0.15*len(potential_masking_input))) # get 15% tokens to be masked
-        for component, _ in masking_labels:
-            masked_indices.append(j + component)  # save masked positions that will be used later when training the model
+        if len(masking_labels) > 18:
+            
+            for component, _ in masking_labels:
+                masked_indices.append(j + component)  # save masked positions that will be used later when training the model
         
-        mask_labels = [masking_labels.pop(random.randrange(len(masking_labels))) for _ in range(round(0.8*len(masking_labels)))] # of the 15%, 80% will be changed to [MASK] token
-        operation = random.choice((ceil,floor)) # we include this to not affect for odd values by doing either round or floor so it is a fair 50-50% for the remaining 20% of labels
-        change_labels = [masking_labels.pop(random.randrange(len(masking_labels))) for _ in range(operation(0.5*len(masking_labels)))]  # of the 15%, 10% is changed for a random value of the vocab
+            mask_labels = [masking_labels.pop(random.randrange(len(masking_labels))) for _ in range(round(0.8*len(masking_labels)))] # of the 15%, 80% will be changed to [MASK] token
+            operation = random.choice((ceil,floor)) # we include this to not affect for odd values by doing either round or floor so it is a fair 50-50% for the remaining 20% of labels
+            change_labels = [masking_labels.pop(random.randrange(len(masking_labels))) for _ in range(operation(0.5*len(masking_labels)))]  # of the 15%, 10% is changed for a random value of the vocab
         # last 10% of labels are for tokens kept the same
 
         # all_labels = [(index1, value1), (index2, value2), ...]
         # change input accordingly
-        for component, _ in mask_labels: 
-            input[j + component] = '[MASK]'  
+            for component, _ in mask_labels: 
+                input[j + component] = '[MASK]'  
 
-        for component, _ in change_labels:
-            input[j + component] = str(random.randint(5,len(vocab)-6))  # 5 becuase we have 5 special tokens
-          
+            for component, _ in change_labels:
+                input[j + component] = str(random.randint(5,len(vocab)-6))  # 5 becuase we have 5 special tokens
+        else:
+            #input = None
+            masked_indices = False
+            #print('Not long enough')
         yield input, masked_indices
-
+    count_masked = 0; count_short = 0
     final_input = []; mask_indices = []
     for input_line in input:
         for input, masked_indices in mask_input(input_line, CLS_token, add_ret_time):
-            final_input.append([input])
-            mask_indices.append(masked_indices)
+            if masked_indices: # to avoid when masking is shorter than 15% of 128
+                count_masked += 1
+                #print('Masked indices: ', masked_indices)
+                final_input.append([input])
+                mask_indices.append(masked_indices)
+            else: 
+                count_short += 1
     
+        
     input = [vocab(item) for sublist in final_input for item in sublist]
     # convert to list of tensors
     input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input]
         
-    return input_tensor_list, target_tensor_list, padding_mask_tensor, mask_indices
+    return input_tensor_list, target_tensor_list, padding_mask_tensor, mask_indices, count_masked, count_short
 
 
 def TrainingBERTDataLoader(files_dir, vocab, training_percentage: float, validation_percentage: float, CLS_token: bool,\
@@ -257,11 +269,16 @@ def TrainingBERTDataLoader(files_dir, vocab, training_percentage: float, validat
     # Divide samples in training and validation sets
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
 
+    
     # Create dataloaders considering the presence or not presence of CLS tokens for the masking, as well as the limited seq_length for 90% of training as mentioned in BERT paper
     # (all input_ds, target_ds and att_mask_ds will have size #spectra x 512 --> each spectra is an input to train our model)
     train_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, CLS_token=CLS_token,\
          add_ret_time=add_ret_time, input_size = input_size, data_repetition=data_repetition) for f in train_samples]
-    
+    print('Ahí va!')
+    hello = np.array(train_ds, dtype='object')
+    count_long = np.sum(hello[:,4])
+    count_short = np.sum(hello[:,5])
+    exit()
     # Create validation dataloader
     val_ds = [create_training_dataset(f,vocab, samples_dir = files_dir, CLS_token=CLS_token, \
         add_ret_time=add_ret_time, input_size=input_size, data_repetition=data_repetition) for f in val_samples]
@@ -284,8 +301,8 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
     chosen for factorizing samples.
     - Labels_path: Pathway to the file where data about samples is saved."""
 
-    assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis"], \
-        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner' (defining kleiner_type) and 'nas_steatosis'"
+    assert class_param in ["Group2", "nas_inflam", "kleiner", "nas_steatosis_ordinal"], \
+        "class_param allowed are 'Group2', 'nas_inflam', 'kleiner' (defining kleiner_type) and 'nas_steatosis_ordinal'"
     
     # Get rid of the '.raw' extension of file_tune_names to get a match with the csv dataframe later
     fine_tune_files = [file_name[:-4] for file_name in fine_tune_files]
@@ -301,25 +318,27 @@ def fine_tune_ds(fine_tune_files, class_param = 'Group2', kleiner_type = None, \
 
     labels_df = labels_df.loc[labels_df['File name'].isin(fine_tune_files)] # Consider only those we are interested in  
     labels_df = labels_df[labels_df["Groups"] != 'QC'] # Get rid of the quality controls
-   
+
     if class_param != 'Group2':
         labels_df = labels_df[~labels_df[class_param].isnull()] # Get rid of ALD patients with no scores for the chosen parameter
     
     # depending on the parameter, we have different binary classifications depending on the scores
     if class_param == 'Group2':
-        labels_df['class_id'] = labels_df[class_param].factorize()[0]
+        labels_df['class_id'] = labels_df[class_param].factorize(sort=True)[0] #sort to ensure ALD is 0 --> considered positive and HP is 1 (alphabetic sorting)
 
     elif class_param == 'nas_inflam':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[0,1])
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,5], labels=[1,0])
 
     elif class_param == 'kleiner':
         if kleiner_type == 'significant':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,1,4], labels=[1,0])
+            
         elif kleiner_type == 'advanced':
-            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[0,1])
+            labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,2,4], labels=[1,0])
+  
     
-    elif class_param == 'nas_steatosis':
-        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[0,1])
+    elif class_param == 'nas_steatosis_ordinal':
+        labels_df['class_id'] = pd.cut(labels_df[class_param], bins=[-1,0,4], labels=[1,0])
     
     # If we want to save the original class name and know its id
     #category_id_df = df[[class_param, 'class_id']].drop_duplicates()
@@ -392,7 +411,7 @@ def create_finetuning_dataset(sample, vocab, samples_dir, label, min_scan_count,
     
     # convert to list of tensors
     input_tensor_list = [torch.tensor(L, dtype=torch.int64) for L in input_list]
-    
+
     # Get the target tensor (meaning the class_id for this sample linked to each scan of the sample)
     label_tensor_list = [torch.tensor(label, dtype=torch.int64) for _ in range(len(input_tensor_list))]
     
@@ -409,26 +428,63 @@ def count_scans(samples_dir, samples):
     return min_scan_count
 
 
-def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, classification_layer: str, \
+def compensate_imbalance(labels_list, samples_list, n_first_class, n_second_class):
+
+    n_bigger_class = max(n_first_class, n_second_class)
+    n_smaller_class = min(n_first_class, n_second_class)
+    
+    if n_first_class > n_second_class:
+        potential_indices = [indices for indices, label in enumerate(labels_list) if label == 1]
+        potential_repeat_samples = [samples_list[index] for index in potential_indices]
+        min_label = 1
+    else:
+        potential_indices = [indices for indices, label in enumerate(labels_list) if label == 0]
+        potential_repeat_samples = [samples_list[index] for index in potential_indices]
+        min_label = 0
+    
+    selection = random.choices(potential_repeat_samples, k=(n_bigger_class - n_smaller_class))
+    
+    samples_list.extend(selection)
+    labels_list.extend([min_label]*(n_bigger_class - n_smaller_class))
+   
+    #Shuffle to avoid having all of the same minority class at the end of the datatasets
+    shuffling = list(zip(samples_list, labels_list))
+    for shuffling_times in range(10):
+        random.shuffle(shuffling)
+    samples_list, labels_list = zip(*shuffling)
+    
+    return samples_list, labels_list
+    
+
+def FineTuneBERTDataLoader(files_dir: str, vocab, training_percentage: float, validation_percentage: float, crop_input: bool, \
     class_param: str = 'Group2', kleiner_type: str = None, labels_path: str = '/home/projects/cpr_10006/projects/gala_ald/data/clinical_data/ALD_histological_scores.csv'):
     "Simplify 'DataLoader' creation for fine-tuning BERT in one function."
 
     train_samples, val_samples = divide_train_val_samples(files_dir, train_perc=training_percentage, val_perc=validation_percentage)
     finetune_samples = train_samples + val_samples
-
     labels_df = fine_tune_ds(finetune_samples, class_param, kleiner_type, labels_path)
     
-    # TODO!!: Issues regarding imbalanced dataset!!! Could be fixed using weight in cross entropy loss
-
     #print(len(labels_df.index[labels_df['class_id'] == 0]))
     #print(len(labels_df.index[labels_df['class_id'] == 1]))
-
+    
     num_labels = len(labels_df['class_id'].unique())
     
     train_labels, train_finetune_samples = get_labels(labels_df, train_samples)
     val_labels, val_finetune_samples= get_labels(labels_df, val_samples)
+
+    # Compensate for class imbalance (for now just done for a binary classification which is always our case)
+    # Just compensat if one class is present more than 10% with respect to the other
     
-    if classification_layer == 'CNN': # keep all samples with same number of scans for CNN
+    train_first_class = train_labels.count(0); train_second_class = train_labels.count(1)
+    val_first_class = val_labels.count(0); val_second_class = val_labels.count(1)
+
+    if abs(train_first_class-train_second_class)/min(train_first_class, train_second_class) > 0.1:
+        train_finetune_samples, train_labels = compensate_imbalance(train_labels, train_finetune_samples, train_first_class, train_second_class)
+        
+    if abs(val_first_class-val_second_class)/min(val_first_class, val_second_class) > 0.1:
+        val_finetune_samples, val_labels = compensate_imbalance(val_labels, val_finetune_samples, val_first_class, val_second_class)
+    
+    if crop_input: # keep all samples with same number of scans for CNN or VAE with conv
         min_scan_count = count_scans(files_dir, finetune_samples)
     else:
         min_scan_count = None
