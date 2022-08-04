@@ -9,6 +9,7 @@ Packages required:
 
 
 The natural process to follow is as shown below:
+    
     1. dataset_translator.py 
     2. BERT_train.py
 
@@ -19,9 +20,11 @@ If one wants to analyze the performance of the trained BERT model before going i
     5. plot_samples.py
 
 Otherwise, for the fine-tuning step:
+    
     6. BERT_finetune.py
 
 The other support scripts:
+    
     7. architectures.py
     8. utils.py
     9. data_load.py
