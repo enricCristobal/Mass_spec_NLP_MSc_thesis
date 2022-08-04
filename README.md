@@ -6,3 +6,5 @@ Packages required:
 - torch.text (https://pypi.org/project/torchtext/)
 - pandas
 - umap-learn (pip install umap-learn)
+
+![My Image](Images/Workflow_2.png)
